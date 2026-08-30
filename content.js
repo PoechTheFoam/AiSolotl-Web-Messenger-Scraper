@@ -2,22 +2,21 @@ let chatRegion;
 let conversation
 let tables;
 let conversations={};
-let storedConversations = {};
+let storedConversations = [];
 let c_list_container;
-let c_list=[];
-let c_list_labeled={}; //c_list_labeled purely for checking processed status
-let processing_list=undefined;
-let current_index=0;
+let c_list=[]; 
+let c_list_labelled={}
+let processing_list=[];
 initialize();
 
 async function initialize(){ 
 
     // assuming that user has conversations + chats and previously chatted with sb in messenger layout
     // assuming using full Messenger layout (not mini messenger in facebook layout)
-
-    function waitForElementsSettle3(){
-        
-    }
+    conversations=await loadConversations();
+    c_list_labelled=await loadLabelledList();
+    updateProcessingList(c_list_labelled);
+    
 
     async function initialize_chatRegion_and_conversation(){
         chatRegion= await waitForElement("div[role='log']");
@@ -25,40 +24,40 @@ async function initialize(){
     }
     
     await initialize_chatRegion_and_conversation();
-    let chatRegion_old=chatRegion;
     let processing=false;
     let mutating=false;
     let next_in_process=false;
-    let initialize_cr_c=false;
 
     async function processConversation(conversation){
         let found;
-        let target_msg_id;
+        //let target_msg_id; temporarily shelved
         let first_session=true
-        if ((storedConversations[conversation])){
-            if (storedConversations[conversation].length>0) first_session=false;
-        }
-        if (!first_session){
+        /*if ((conversations[conversation])){
+            if (conversations[conversation].length>0) first_session=false;
+        }   temporarily shelved */ 
+        /*if (!first_session){
             found=false;
             target_msg_id=(storedConversations[conversation])?.at(-1)
-        }
+        }   temporarily shelved*/
         let counter=0;
         let scrollAnchor=undefined;
         let cur_conv=chatRegion.getAttribute("aria-label")
         if (conversation!=cur_conv) return; //guard 1 for illegal convo
         function getMessagesData(conversation,tables){
-        if (!storedConversations[conversation]) {
-            storedConversations[conversation]=[];
-        }
         let output={}
         let innerCounter=0;
         for (const event of tables){
             const messageId=event.getAttribute("data-message-id");
             if (!messageId) continue;
-
-            if (messageId===target_msg_id) found=true;
-            if (storedConversations[conversation].includes(messageId)) continue; //recheck this part if something breaks, such as asynchronous messages loading despite top-bottom order
-            storedConversations[conversation].push(messageId);
+            //if (messageId===target_msg_id) found=true;
+            let conversation_keys;
+            let exist_index=-1;
+            if (conversations[conversation]){
+                conversation_keys=Object.keys(conversations[conversation]);
+                exist_index=conversation_keys.indexOf(messageId);
+            }
+            
+            if (exist_index!=-1) continue; 
             
             if (innerCounter===0) scrollAnchor=event;
             const rawLabel= event.getAttribute("aria-label");
@@ -154,6 +153,7 @@ async function initialize(){
             }
             if (!scrollAnchor) {
                 console.log("Maximum reached: "+counter);
+                console.log(chatRegion.querySelector(`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`))
                 console.log(scrollAnchor);
                 break;
             }
@@ -163,7 +163,7 @@ async function initialize(){
             console.log(scrollAnchor);
         }
         }
-        if (!first_session){
+        if (!first_session){ //might be obsolete for now
             while (!found){
                 scrollAnchor=undefined;
                 tables=await waitForElementsSettle(chatRegion);
@@ -210,7 +210,7 @@ async function initialize(){
                 processing=true;
                 await processConversation(conversation);
                 await initialize_conversations();
-                nextConversation();
+                await nextConversation();
                 await initialize_chatRegion_and_conversation();
                 obs.disconnect();
                 obs.observe(chatRegion, {
@@ -232,18 +232,20 @@ async function initialize(){
         subtree:true,
     });
     async function nextConversation(){
-        let next_convo;
-        find_current(c_list);
-        //c_list_labeled[current_index].processed=true; //recheck this mapping scheme later -> may be unnecessary with processing_list
-        processing_list[current_index]=true;
-        let next_index=processing_list.indexOf(false);
-        if (next_index===-1) return; //no more unprocesseds
-        next_convo=c_list[next_index];
+        let next_convo_link;
+        let current_identifer=find_current_identifier(c_list_labelled);
+        c_list_labelled[current_identifer].processed=true; 
+        await saveConversations(conversations,c_list_labelled);
+        updateProcessingList(c_list_labelled); //shold remove current from the list.
+        if (processing_list.length===0) return; //no more convos to process
+        let next_identifier=processing_list[0]; //always 
+        next_convo_link=find_next_link(c_list_labelled,next_identifier);
         next_in_process=true;
-        next_convo.click();
+        window.location.href=next_convo_link;
         //find conv that has attr "current=true"
         //find index of that conv, go into the next conv/return depending on logic
     }
+
     function waitForElementsSettle2({stableForMs = 5000,timeoutMs = 15000} = {}) {
     return new Promise((resolve) => {
         const selector = "[aria-label][role='navigation']";
@@ -278,32 +280,26 @@ async function initialize(){
 
         check();
     });
-        }
-    function find_current(c_list){
-        console.log("C");
-        c_list.forEach((c,index)=>{
-            let name;
-            if (c.hasAttribute("aria-label")) {
-                name=c.getAttribute("aria-label");
-                console.log(name);
-            }
-            else {
-                let possible_spans=c.querySelectorAll("span[dir]");
-                for (const s of possible_spans){
-                    if (conversation.includes(s.innerText)) {
-                        name=s.innerText;
-                        console.log(name);
-                        break;
-                    }
-                }
-            }
-            //c_list_labeled purely for checking processed status
-            if (conversation.includes(name)) {c_list_labeled[index]={name:name,element:c,processed:false};current_index=index} //marking current c_list element
-            else {c_list_labeled[index]={name:name,element:c,processed:false};}
-        })
+    }
 
+    function find_next_link(c_list_labelled,next_identifier){ //c_list contains cliclabke elements?
+        for (const [key,value] of Object.entries(c_list_labelled)){
+            if (key===next_identifier) return value.link;
+        }
+    }
+
+    function find_current_identifier(c_list_labelled){
+        console.log("C");
+        for (const [key,value] of Object.entries(c_list_labelled)){
+            if (value.current){
+                console.log(key);
+                console.log(value);
+                return key
+            }
+        }
         console.log("D");
     }
+
     async function initialize_conversations(){
     console.log("A");
     c_list_container=[...await waitForElementsSettle2()]?.[2];
@@ -312,12 +308,32 @@ async function initialize(){
     if (c_list.length<11){ // prototype limitation
         let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]");
         c_list=[...cand]; //prototype limitation
-        if (!processing_list) processing_list=new Array(c_list.length).fill(false);
-        if (processing_list&&processing_list.length<c_list.length) {
-            let size_diff=c_list.length-processing_list.length;
-            let tempArray=new Array(size_diff).fill(false);
-            processing_list=[...tempArray];
+        for (const c of c_list){
+            let c_is_current=false;
+            let name;
+            if (c.hasAttribute("aria-label")) name=c.getAttribute("aria-label");
+            else {
+                let spanList=c.querySelectorAll("span[dir]")
+                for (const s of spanList){
+                    if (conversation.includes(s.innerText)){
+                        name=s.innerText;
+                        c_is_current=true;
+                        break;
+                    }
+                }
+            }
+            let c_identifier=c.getAttribute("href");
+            let c_link=`https://facebook.com${c_identifier}`;
+            if (c_is_current){ //branching for loads
+                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true};
+            }
+            else {
+                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false};
+            }
         }
+        updateProcessingList(c_list_labelled);
         }
     }
     
@@ -403,3 +419,41 @@ function waitForElementsSettle(chatRegion, {
         check();
     });
 }
+
+async function saveConversations(conversations,c_list_labelled){
+    const result=await chrome.storage.local.get("AISOLOTL");
+    let AISOLOTL=result?.AISOLOTL ?? {}
+    AISOLOTL.platform ??= {}
+    AISOLOTL.platform["Messenger"]??= {}
+    AISOLOTL.platform["Messenger"].conversations={...AISOLOTL.platform["Messenger"].conversations, ...conversations};
+    AISOLOTL.platform["Messenger"].c_list_labelled={...AISOLOTL.platform["Messenger"].c_list_labelled, ...c_list_labelled};
+    console.log(AISOLOTL.platform["Messenger"].conversations);
+    console.log(AISOLOTL.platform["Messenger"].c_list_labelled);
+    await chrome.storage.local.set({
+        AISOLOTL
+    }).catch((error)=>{console.log(error)})
+}
+
+async function loadConversations(){
+    const result=await chrome.storage.local.get("AISOLOTL");
+    if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].conversations) return {}
+    console.log(result.AISOLOTL.platform["Messenger"].conversations)
+    return result.AISOLOTL.platform["Messenger"].conversations;
+}
+
+async function loadLabelledList(){
+    const result=await chrome.storage.local.get("AISOLOTL");
+    if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].c_list_labelled) return {}
+    console.log(result.AISOLOTL.platform["Messenger"].c_list_labelled);
+    return result.AISOLOTL.platform["Messenger"].c_list_labelled;
+}
+
+function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplicates.
+    processing_list=[]
+    for (const [key,value] of Object.entries(c_list_labelled)){
+        if (!value.processed) processing_list.push(key); //c=identifier=href
+    }
+    //automatically updates when function's called when c_list_labelled has been altered
+}
+
+function clearSavedConversations(){}
