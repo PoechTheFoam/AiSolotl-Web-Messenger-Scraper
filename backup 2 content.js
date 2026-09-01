@@ -7,7 +7,6 @@ let c_list_container;
 let c_list=[]; 
 let c_list_labelled={}
 let processing_list=[];
-let end_observing=false;
 initialize();
 
 async function initialize(){ 
@@ -238,10 +237,7 @@ async function initialize(){
         c_list_labelled[current_identifer].processed=true; 
         await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled); //shold remove current from the list.
-        if (processing_list.length===0){
-
-            return;
-        } //no more convos to process
+        if (processing_list.length===0) return; //no more convos to process
         let next_identifier=processing_list[0]; //always 
         next_convo_link=find_next_link(c_list_labelled,next_identifier);
         next_in_process=true;
