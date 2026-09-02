@@ -7,7 +7,7 @@ let c_list_container;
 let c_list=[]; 
 let c_list_labelled={}
 let processing_list=[];
-let end_observing=false;
+clearSavedConversations();
 initialize();
 
 async function initialize(){ 
@@ -17,6 +17,11 @@ async function initialize(){
     conversations=await loadConversations();
     c_list_labelled=await loadLabelledList();
     updateProcessingList(c_list_labelled);
+    console.log(await chrome.storage.local.get(null));
+    console.log("conversastions: ",structuredClone(conversations));
+    console.log("conversations: ",structuredClone(conversations));
+    console.log("c_list_labelled: ",structuredClone(c_list_labelled))
+    console.log("processing_list: ", structuredClone(processing_list))
     
 
     async function initialize_chatRegion_and_conversation(){
@@ -25,9 +30,10 @@ async function initialize(){
     }
     
     await initialize_chatRegion_and_conversation();
-    let processing=false;
-    let mutating=false;
-    let next_in_process=false;
+    let process_state="idle"; // -> turns into processing="idle" and processing="ongoing" (for processing=true)
+    let mutating=false; 
+    let next_in_process=false; // turns into -> processing="switching"
+    let end_observing=false; // turns into -> processing="finished"
 
     async function processConversation(conversation){
         let found;
@@ -58,9 +64,15 @@ async function initialize(){
                 exist_index=conversation_keys.indexOf(messageId);
             }
             
-            if (exist_index!=-1) continue; 
+            if (exist_index!=-1) continue;    
             
-            if (innerCounter===0) scrollAnchor=event;
+            if (innerCounter===0) {
+                scrollAnchor=event;
+                /*console.log("event: ",event)
+                console.log("scrollAnchor: ",scrollAnchor);
+                console.log("Is event connected to chatRegion?", chatRegion.contains(scrollAnchor));
+                console.log("Is connected in general? ", scrollAnchor.isConnected);*/
+            }
             const rawLabel= event.getAttribute("aria-label");
 
             let content= event.innerText.trim(); //
@@ -121,12 +133,12 @@ async function initialize(){
 
             
             
-            /*console.log("------------------")
+            console.log("------------------")
             console.log("Message "+innerCounter)
             console.log("Raw label: "+rawLabel)
             console.log("content: "+content);
             console.log("media: ", media);
-            innerCounter++;*/
+            innerCounter++;
             output[messageId]={
             content:content,
             media:media
@@ -137,25 +149,34 @@ async function initialize(){
         return output;
         }
         if (first_session){
-                    while (first_session&&counter<7){
+            while (first_session&&counter<7){
             scrollAnchor=undefined;
             tables = await waitForElementsSettle(chatRegion);
+            //console.log("New data: ",structuredClone(getMessagesData(conversation,tables)));
+            //console.log("Old data: ", structuredClone(conversations[conversation]))
             conversations[conversation]= {...(getMessagesData(conversation,tables)),...(conversations[conversation] ?? {})};
+            //console.log("Data post-write: ",structuredClone(conversations[conversation]))
             if (!scrollAnchor&&Object.keys(conversations[conversation]??{}).length>0) {
                 let anchorSelector=`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`;
-                scrollAnchor=chatRegion.querySelector(anchorSelector);
+                //console.log("Inside 1st anchor check, chatRegion: ",chatRegion)
+                //console.log("Inside 1st anchor check, anchorSelector: ",anchorSelector);
+                scrollAnchor=chatRegion.querySelector(anchorSelector); // 
+                //console.log("Inside 1st anchor check, scrollAnchor: ",scrollAnchor);
             }
             if (scrollAnchor){
                 scrollAnchor?.scrollIntoView({
                 block:"end",
-                behavior:"auto"
+                behavior:"smooth"
                 })
                 counter++;   
             }
             if (!scrollAnchor) {
-                console.log("Maximum reached: "+counter);
-                console.log(chatRegion.querySelector(`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`))
-                console.log(scrollAnchor);
+                /*console.log("Maximum reached: "+counter);
+                console.log("Inside invalid anchor check, chatRegion: ",chatRegion);
+                console.log("Inside invalid anchor check, scrollAnchor written like 1st check: ", chatRegion.querySelector(`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`))
+                console.log("Inside invalid anchor check, scrollAnchor: ",scrollAnchor);
+                console.log("Inside invalid anchor check, id of earliest message: ",Object.keys(conversations[conversation])[0]);*/
+                for (const [key,value] of Object.entries(conversations[conversation])){console.log(key+": "+value.content)};
                 break;
             }
         }
@@ -197,31 +218,33 @@ async function initialize(){
         if (childListMut||convMut){ //conversation changed || messages count modified
             console.log("mutating");
             mutating=true;
-            if (((convMut)&& processing)&&!next_in_process){ //guard 2, during write to conversations
+            if (((convMut)&& process_state==="ongoing")){ //guard 2, during write to conversations
                 conversations[conversation].clear();
                 conversation=chatRegion.getAttribute("aria-label");
                 //chatRegion.setAttribute("processed",false); //old chat region, doesn't exist in DOM anymore -> set at start
-                processing=false;
+                process_state="idle";
                 //needs process reminder somehow (reverse traversal)
             }
             //anything above processing=true in risk of being called multiple times
             while (mutating){
                 mutating=false;
-               if (!processing){
-                processing=true;
+               if (process_state==="idle"){
+                process_state="ongoing";
                 await processConversation(conversation);
                 await initialize_conversations();
                 await nextConversation();
-                await initialize_chatRegion_and_conversation();
-                obs.disconnect();
-                obs.observe(chatRegion, {
-                childList: true,
-                attributes:true,
-                attributeFilter:["aria-label"],
-                subtree:true,
-                });
-                processing=false;
-                next_in_process=false;
+                if (process_state==="finished") obs.disconnect();
+                else {
+                    await initialize_chatRegion_and_conversation();
+                    obs.disconnect();
+                    obs.observe(chatRegion, {
+                    childList: true,
+                    attributes:true,
+                    attributeFilter:["aria-label"],
+                    subtree:true,
+                    });
+                    process_state="idle";
+                }
                 }
             }
         }
@@ -239,12 +262,14 @@ async function initialize(){
         await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled); //shold remove current from the list.
         if (processing_list.length===0){
-
+            end_observing=true;
+            process_state="finished"
             return;
         } //no more convos to process
         let next_identifier=processing_list[0]; //always 
         next_convo_link=find_next_link(c_list_labelled,next_identifier);
         next_in_process=true;
+        process_state="switching"
         window.location.href=next_convo_link;
         //find conv that has attr "current=true"
         //find index of that conv, go into the next conv/return depending on logic
@@ -386,7 +411,7 @@ function waitForElement(selector){
 
 
 function waitForElementsSettle(chatRegion, {
-    stableForMs = 3000,
+    stableForMs = 5000,
     timeoutMs = 15000
 } = {}) {
     return new Promise((resolve) => {
@@ -460,4 +485,6 @@ function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplica
     //automatically updates when function's called when c_list_labelled has been altered
 }
 
-function clearSavedConversations(){}
+async function clearSavedConversations(){
+    await chrome.storage.local.clear();
+}
