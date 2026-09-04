@@ -1,16 +1,21 @@
-let chatRegion;
-let conversation
-let tables;
-let conversations={};
-let storedConversations = [];
-let c_list_container;
-let c_list=[]; 
-let c_list_labelled={}
-let processing_list=[];
-clearSavedConversations();
+//clearSavedConversations();
 initialize();
 
 async function initialize(){ 
+    if (document.querySelector("div[id='jajajaggezbozo']")) return; //unknown if this resolves dupe injections yet.
+    let chatRegion;
+    let conversation
+    let tables;
+    let conversations={};
+    let storedConversations = [];
+    let c_list_container;
+    let c_list=[]; 
+    let c_list_labelled={}
+    let processing_list=[];
+
+    const dupe_preventor=document.createElement("div");
+    dupe_preventor.id='jajajaggezbozo';
+    document.body.append(dupe_preventor);
 
     // assuming that user has conversations + chats and previously chatted with sb in messenger layout
     // assuming using full Messenger layout (not mini messenger in facebook layout)

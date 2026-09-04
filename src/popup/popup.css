@@ -1,0 +1,40 @@
+body, body *{
+    align-items: center;
+}
+#params,#control,#indicator{
+    display: flex;
+    flex-direction:column;
+    align-items: center;
+    gap:5px;
+}
+.item{
+    flex:1
+}
+h4{
+    display:inline-block;
+    margin:2px;
+}
+h3{
+    padding: 2px;
+    margin: 2px;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 6px solid #e0e0e0;       /* Light grey track background */
+  border-top: 6px solid #3498db;    /* Blue spinning arc */
+  border-radius: 50%;               /* Turns the square block into a circle */
+  margin: 0 auto 12px auto;
+  animation: spin 1s linear infinite; /* Loops infinitely in 1 second */
+}
+
+
+@keyframes spin {
+  0% { 
+    transform: rotate(0deg); 
+  }
+  100% { 
+    transform: rotate(360deg); 
+  }
+}

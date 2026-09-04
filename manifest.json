@@ -9,12 +9,9 @@
     "http://127.0.0.1:8000/*"
   ],
   "background":{
-    "service_worker":"background.js"
+    "service_worker":"background/background.js"
   },
-  "content_scripts":[{
-    "matches":["https://www.messenger.com/*",
-    "https://www.facebook.com/messages/*"],
-    "js":["content.js"],
-    "run_at": "document_idle"
-  }]
+  "action":{
+    "default_popup":"popup/popup.html"
+  }
 }

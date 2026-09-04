@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <section id="control">
+        <h3>Start Summary</h3>
+        <input type="button" id="sum_btn" value="Summarize" disabled>
+
+    </section>
+    <section id="params">
+        <h3>Parameters</h3>
+        <div class="item">
+            <h4>Conversations to summarize</h4> <input type="button" id="conv_pick" value="Browse"> 
+        </div>
+        <div class="item">
+            <h4><label for="scroll_amt">Scroll up conersations # times (max 20)?</label></h4>
+        </div>
+        <div>
+            <input type="number" name="scroll_amt" id="scroll_amt" max="20">
+        </div>
+    </section>
+    <section id="indicator" style="display:none;">
+        <div><br></div>
+        <div class="loading_text"><h4>Processing conversations, please refrain from clicking on anything</h4></div>
+        <div class="spinner"></div>
+    </section>
+    <script src="popup.js"></script>
+</body>
+</html>
