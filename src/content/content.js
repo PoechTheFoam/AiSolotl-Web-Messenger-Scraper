@@ -1,74 +1,69 @@
 //clearSavedConversations();
 initialize();
 
-async function initialize(){ 
-    if (document.querySelector("div[id='jajajaggezbozo']")) return; //unknown if this resolves dupe injections yet.
-    let chatRegion;
-    let conversation
-    let tables;
-    let conversations={};
-    let storedConversations = [];
-    let c_list_container;
-    let c_list=[]; 
-    let c_list_labelled={}
-    let processing_list=[];
+// assuming that user has conversations + chats and previously chatted with sb in messenger layout
+// assuming using full Messenger layout (not mini messenger in facebook layout)
 
+async function initialize(){ 
+    if (document.querySelector("div[id='jajajaggezbozo']")) return;
     const dupe_preventor=document.createElement("div");
     dupe_preventor.id='jajajaggezbozo';
     document.body.append(dupe_preventor);
 
-    // assuming that user has conversations + chats and previously chatted with sb in messenger layout
-    // assuming using full Messenger layout (not mini messenger in facebook layout)
-    conversations=await loadConversations();
-    c_list_labelled=await loadLabelledList();
-    updateProcessingList(c_list_labelled);
-    console.log(await chrome.storage.local.get(null));
-    console.log("conversastions: ",structuredClone(conversations));
-    console.log("conversations: ",structuredClone(conversations));
-    console.log("c_list_labelled: ",structuredClone(c_list_labelled))
-    console.log("processing_list: ", structuredClone(processing_list))
-    
+    let chatRegion;
+    let chatParent;
+    let conversation
+    let tables;
+    let conversations={};
+    let c_list_container;
+    let c_list=[]; 
+    let c_list_labelled={}
+    let processing_list=[];
+    let process_state="idle"; 
 
     async function initialize_chatRegion_and_conversation(){
         chatRegion= await waitForElement("div[role='log']");
+        chatParent=chatRegion.parentElement;
         conversation=chatRegion.getAttribute("aria-label");
     }
+
+    async function gatherData(){
+        conversations=await loadConversations();
+        c_list_labelled=await loadLabelledList();
+        updateProcessingList(c_list_labelled);
+    }
+
+    gatherData() //signal this to fire when gather data button clicked
+
+
+    /*console.log(await chrome.storage.local.get(null));
+    console.log("conversastions: ",structuredClone(conversations));
+    console.log("conversations: ",structuredClone(conversations));
+    console.log("c_list_labelled: ",structuredClone(c_list_labelled))
+    console.log("processing_list: ", structuredClone(processing_list))*/
+    
     
     await initialize_chatRegion_and_conversation();
-    let process_state="idle"; // -> turns into processing="idle" and processing="ongoing" (for processing=true)
-    let mutating=false; 
-    let next_in_process=false; // turns into -> processing="switching"
-    let end_observing=false; // turns into -> processing="finished"
+    await initialize_conversations();
 
     async function processConversation(conversation){
-        let found;
-        //let target_msg_id; temporarily shelved
         let first_session=true
-        /*if ((conversations[conversation])){
-            if (conversations[conversation].length>0) first_session=false;
-        }   temporarily shelved */ 
-        /*if (!first_session){
-            found=false;
-            target_msg_id=(storedConversations[conversation])?.at(-1)
-        }   temporarily shelved*/
         let counter=0;
         let scrollAnchor=undefined;
         let cur_conv=chatRegion.getAttribute("aria-label")
-        if (conversation!=cur_conv) return; //guard 1 for illegal convo
+        if (conversation!=cur_conv) return;
         function getMessagesData(conversation,tables){
         let output={}
         let innerCounter=0;
         for (const event of tables){
             const messageId=event.getAttribute("data-message-id");
             if (!messageId) continue;
-            //if (messageId===target_msg_id) found=true;
             let conversation_keys;
             let exist_index=-1;
             if (conversations[conversation]){
                 conversation_keys=Object.keys(conversations[conversation]);
                 exist_index=conversation_keys.indexOf(messageId);
             }
-            
             if (exist_index!=-1) continue;    
             
             if (innerCounter===0) {
@@ -138,11 +133,11 @@ async function initialize(){
 
             
             
-            console.log("------------------")
+            /*console.log("------------------")
             console.log("Message "+innerCounter)
             console.log("Raw label: "+rawLabel)
             console.log("content: "+content);
-            console.log("media: ", media);
+            console.log("media: ", media);*/
             innerCounter++;
             output[messageId]={
             content:content,
@@ -190,50 +185,10 @@ async function initialize(){
             console.log(scrollAnchor);
         }
         }
-        if (!first_session){ //might be obsolete for now
-            while (!found){
-                scrollAnchor=undefined;
-                tables=await waitForElementsSettle(chatRegion);
-                conversations[conversation]= {...(getMessagesData(conversation,tables)),...(conversations[conversation] ?? {})};
-                if (found) {
-                    console.log("Found target, stopping scroll");
-                    break;
-                }
-                if (!scrollAnchor&&Object.keys(conversations[conversation]??{}).length>0) {
-                let anchorSelector=`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`;
-                scrollAnchor=chatRegion.querySelector(anchorSelector);
-            }
-            if (scrollAnchor){
-                scrollAnchor?.scrollIntoView({
-                block:"end",
-                behavior:"auto"
-                })
-            }
-            if (!scrollAnchor) {
-                console.error("Error loading earliest message");
-                break;
-            }
-        }
-        }
     }
 
-    const observer = new MutationObserver(async (mutations,obs)=>{
-        const childListMut= mutations.some(m=>m.type==="childList"); 
-        const convMut=mutations.some(m=>(m.type==="attributes"&&m.target===chatRegion));
-        if (childListMut||convMut){ //conversation changed || messages count modified
-            console.log("mutating");
-            mutating=true;
-            if (((convMut)&& process_state==="ongoing")){ //guard 2, during write to conversations
-                conversations[conversation].clear();
-                conversation=chatRegion.getAttribute("aria-label");
-                //chatRegion.setAttribute("processed",false); //old chat region, doesn't exist in DOM anymore -> set at start
-                process_state="idle";
-                //needs process reminder somehow (reverse traversal)
-            }
-            //anything above processing=true in risk of being called multiple times
-            while (mutating){
-                mutating=false;
-               if (process_state==="idle"){
+    //place this inside signal sum_btn clicked
+    if (process_state==="idle"){
                 process_state="ongoing";
                 await processConversation(conversation);
                 await initialize_conversations();
@@ -251,15 +206,25 @@ async function initialize(){
                     process_state="idle";
                 }
                 }
+
+    const observer = new MutationObserver(async (mutations,obs)=>{
+        for (const m of mutations){
+            for (const node of m.removedNodes){
+                if (node.role==="log"&&node.tagName==="div"){
+                    if (process_state==="ongoing") {
+                        conversations[conversation].clear();
+                        await initialize_chatRegion_and_conversation();
+                        obs.disconnect();
+                        obs.observe(chatParent,{childList:true})
+                        process_state="idle";
+                    }
+                }
             }
         }
     });            
-    observer.observe(chatRegion, {
-        childList: true,
-        attributes:true,
-        attributeFilter:["aria-label"],
-        subtree:true,
-    });
+
+    observer.observe(chatParent,{childList:true});
+
     async function nextConversation(){
         let next_convo_link;
         let current_identifer=find_current_identifier(c_list_labelled);
@@ -371,6 +336,14 @@ async function initialize(){
     
 }
 
+function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplicates.
+    processing_list=[]
+    for (const [key,value] of Object.entries(c_list_labelled)){
+        if (!value.processed) processing_list.push(key); //c=identifier=href
+    }
+    //automatically updates when function's called when c_list_labelled has been altered
+}
+
 function delayWithInterruptions(){
     return new Promise((resolve)=>{
         let stableTimer;
@@ -480,14 +453,6 @@ async function loadLabelledList(){
     if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].c_list_labelled) return {}
     console.log(result.AISOLOTL.platform["Messenger"].c_list_labelled);
     return result.AISOLOTL.platform["Messenger"].c_list_labelled;
-}
-
-function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplicates.
-    processing_list=[]
-    for (const [key,value] of Object.entries(c_list_labelled)){
-        if (!value.processed) processing_list.push(key); //c=identifier=href
-    }
-    //automatically updates when function's called when c_list_labelled has been altered
 }
 
 async function clearSavedConversations(){
