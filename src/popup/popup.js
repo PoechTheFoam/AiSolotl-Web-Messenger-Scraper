@@ -6,13 +6,14 @@ document.addEventListener("DOMContentLoaded", async function(){
     let init_btn=document.querySelector("#init_btn");
     let indicator=document.querySelector("#indicator");
     let loading_text=indicator.querySelector("[class='loading_text']");
+    let original_text=loading_text.innerText;
 
     let conv_picked={}
     let c_list;
     let c_list_labelled;
 
     init_btn.addEventListener("click",async ()=>{
-        let original_text=loading_text.innerText;
+        
         loading_text.textContent="Extracting data, please refrain from clicking on anything"
         indicator.style.display="flex";
         try {
@@ -27,10 +28,11 @@ document.addEventListener("DOMContentLoaded", async function(){
                 c_list=response.c_list;
                 conv_pick.disabled=false;
                 scroll_amt_input.disabled=false;
+                indicator.style.display="none";
+                loading_text.textContent=original_text;
             }
-            indicator.style.display="none";
-            loading_text.textContent=original_text;
         } catch(error) {
+            loading_text.textContent="Failed to extract messages, please try again."
             console.error("Error sending message: ",error)
         }
         
@@ -41,7 +43,25 @@ document.addEventListener("DOMContentLoaded", async function(){
     })
 
     conv_pick.addEventListener("click", async ()=>{
-        addCheckboxes(c_list_labelled);
+        loading_text.textContent="Adding checkboxes, please refrain from clicking on anything"
+        indicator.style.display="flex";
+        try{
+            const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+            if (!tab){
+                console.error("No active tabs to gather data from, please switch your current tab to Messenger and try again.");
+                return;
+            }
+            const response=await chrome.tabs.sendMessage(tab.id,{signal:"pick_conv"});
+            if(response.status==="finished"){
+                indicator.style.display="none";
+                loading_text.textContent=original_text;
+            }
+
+        }
+        catch(error){
+            loading_text.textContent="Failed to add checkboxes, please try again."
+            console.error(error);
+        }
     })
 
     scroll_amt_input.addEventListener("change", ()=>{
@@ -54,12 +74,5 @@ document.addEventListener("DOMContentLoaded", async function(){
         addCheckboxes(c_list);
     }
 
-    function addCheckboxes(c_list){
-        for (const c of c_list){
-            let checkbox=document.createElement("input");
-            checkbox.type="checkbox";
-            checkbox.id=key;
-            c.insertAdjacentElement("beforebegin",checkbox);
-        }
-    }
+    
 });

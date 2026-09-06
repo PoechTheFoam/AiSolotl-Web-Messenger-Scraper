@@ -5,11 +5,6 @@ initialize();
 // assuming using full Messenger layout (not mini messenger in facebook layout)
 
 async function initialize(){ 
-    if (document.querySelector("div[id='jajajaggezbozo']")) return;
-    const dupe_preventor=document.createElement("div");
-    dupe_preventor.id='jajajaggezbozo';
-    document.body.append(dupe_preventor);
-
     let chatRegion;
     let chatParent;
     let conversation
@@ -27,13 +22,14 @@ async function initialize(){
         conversation=chatRegion.getAttribute("aria-label");
             const observer = new MutationObserver(async (mutations,obs)=>{
         for (const m of mutations){
+            console.log("chatParent mutation detected")
             for (const node of m.removedNodes){
                 if (node.role==="log"&&node.tagName==="div"){
                     if (process_state==="ongoing") {
                         conversations[conversation].clear();
                         await initialize_chatRegion_and_conversation();
                         obs.disconnect();
-                        obs.observe(chatParent,{childList:true})
+                        obs.observe(chatParent,{childList:true,subtree:true})
                         process_state="idle";
                     }
                 }
@@ -41,7 +37,7 @@ async function initialize(){
         }
     });            
 
-    observer.observe(chatParent,{childList:true});
+    observer.observe(chatParent,{childList:true,subtree:true});
     }
 
     async function gatherData(){
@@ -50,6 +46,69 @@ async function initialize(){
         c_list_labelled=await loadLabelledList();
         updateProcessingList(c_list_labelled);
         await initialize_conversations();
+        const observer=new MutationObserver((mutations, obs)=>{
+            for (const m of mutations){
+                console.log("c_list_container mutation detected")
+                for (const node of m.removedNodes){
+                    if (node.classList?.contains("conv_picker")||node.querySelector(".conv_picker")){
+                        const id=node.id;
+                        let checkbox=document.createElement("input");
+                        checkbox.type="checkbox";
+                        checkbox.class="conv_picker";
+                        checkbox.id=id;
+                        checkbox.checked=c_list_labelled[id].chosen;
+                        let c=document.querySelector(`[href="${id}"]`);
+                        c.insertAdjacentElement("beforebegin",checkbox);
+                    }
+                    if (node.querySelector("a[role='link'][aria-current][href]")) {
+                        console.log(node.getAttribute("href")," conversation removed");
+                    }
+                }
+            }
+        })
+        observer.observe(c_list_container,{
+            childList:true,
+            subtree:true
+        })
+
+        let timer;
+        let timeout_timer;
+
+        c_list_container.addEventListener("scroll", (event)=>{
+            clearTimeout(timer);
+            timer=setTimeout(async ()=>{
+                await updateCheckboxes();
+            },3000)
+            timeout_timer=setTimeout(async ()=>{
+                clearTimeout(timer);
+                await updateCheckboxes();
+            },15000)
+        })
+
+        c_list_container.addEventListener("change",(event)=>{
+            const target=event.target;
+            if (!target.classList.contains("conv_picker")) return;
+            const id=target.id;
+            c_list_labelled[id].chosen=target.checked;
+        })
+    }
+
+    async function updateCheckboxes(){
+        await initialize_conversations();
+        addCheckboxes();
+    }
+
+    function addCheckboxes(){
+        for (const [key,value] of Object.entries(c_list_labelled)){
+            let c=document.querySelector(`[href="${key}"]`)
+            if (!c.querySelector(".conv_picker")){
+                let checkbox=document.createElement("input");
+                checkbox.type="checkbox";
+                checkbox.class="conv_picker";
+                checkbox.id=key;
+                c.insertAdjacentElement("beforebegin",checkbox);
+            }
+        }
     }
 
     //note this architecture in md later (no calling async for message listener's callback function)
@@ -64,6 +123,10 @@ async function initialize(){
                 }); //notes on this in md
             })();
             return true; // notes on this in md
+        }
+        if (request.signal==="pick_conv"){
+            addCheckboxes(c_list);
+            sendResponse({status:"finished"})
         }
     })
 
@@ -256,7 +319,7 @@ async function initialize(){
         //find index of that conv, go into the next conv/return depending on logic
     }
 
-    function waitForElementsSettle2({stableForMs = 5000,timeoutMs = 15000} = {}) {
+    function waitForElementsSettle2({stableForMs = 5000,timeoutMs = 30000} = {}) {
     return new Promise((resolve) => {
         const selector = "[aria-label][role='navigation']";
 
@@ -334,11 +397,11 @@ async function initialize(){
             let c_link=`https://facebook.com${c_identifier}`;
             if (c_is_current){ //branching for loads
                 if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,addedCheckbox:false};
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
             }
             else {
                 if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,addedCheckbox:false};
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
             }
         }
         updateProcessingList(c_list_labelled);
@@ -399,10 +462,7 @@ function waitForElement(selector){
 }
 
 
-function waitForElementsSettle(chatRegion, {
-    stableForMs = 5000,
-    timeoutMs = 15000
-} = {}) {
+function waitForElementsSettle(chatRegion, {stableForMs = 5000, timeoutMs = 30000} = {}) {
     return new Promise((resolve) => {
         const selector = '[data-scope="messages_table"]';
 
