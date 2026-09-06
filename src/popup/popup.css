@@ -1,8 +1,14 @@
 body, body *{
     align-items: center;
 }
-#params,#control,#indicator{
+#params,#control{
     display: flex;
+    flex-direction:column;
+    align-items: center;
+    gap:5px;
+}
+#indicator{
+    display: none;
     flex-direction:column;
     align-items: center;
     gap:5px;

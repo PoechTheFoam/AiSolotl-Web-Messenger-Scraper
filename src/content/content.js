@@ -25,15 +25,47 @@ async function initialize(){
         chatRegion= await waitForElement("div[role='log']");
         chatParent=chatRegion.parentElement;
         conversation=chatRegion.getAttribute("aria-label");
+            const observer = new MutationObserver(async (mutations,obs)=>{
+        for (const m of mutations){
+            for (const node of m.removedNodes){
+                if (node.role==="log"&&node.tagName==="div"){
+                    if (process_state==="ongoing") {
+                        conversations[conversation].clear();
+                        await initialize_chatRegion_and_conversation();
+                        obs.disconnect();
+                        obs.observe(chatParent,{childList:true})
+                        process_state="idle";
+                    }
+                }
+            }
+        }
+    });            
+
+    observer.observe(chatParent,{childList:true});
     }
 
     async function gatherData(){
+        await initialize_chatRegion_and_conversation();
         conversations=await loadConversations();
         c_list_labelled=await loadLabelledList();
         updateProcessingList(c_list_labelled);
+        await initialize_conversations();
     }
 
-    gatherData() //signal this to fire when gather data button clicked
+    //note this architecture in md later (no calling async for message listener's callback function)
+    chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
+        if (request.signal==="start_init") {
+            (async ()=>{
+                await gatherData();
+                sendResponse({
+                    status:"finished",
+                    c_list:c_list,
+                    c_list_labelled:c_list_labelled
+                }); //notes on this in md
+            })();
+            return true; // notes on this in md
+        }
+    })
 
 
     /*console.log(await chrome.storage.local.get(null));
@@ -42,9 +74,6 @@ async function initialize(){
     console.log("c_list_labelled: ",structuredClone(c_list_labelled))
     console.log("processing_list: ", structuredClone(processing_list))*/
     
-    
-    await initialize_chatRegion_and_conversation();
-    await initialize_conversations();
 
     async function processConversation(conversation){
         let first_session=true
@@ -186,7 +215,7 @@ async function initialize(){
         }
         }
     }
-
+/*
     //place this inside signal sum_btn clicked
     if (process_state==="idle"){
                 process_state="ongoing";
@@ -206,25 +235,7 @@ async function initialize(){
                     process_state="idle";
                 }
                 }
-
-    const observer = new MutationObserver(async (mutations,obs)=>{
-        for (const m of mutations){
-            for (const node of m.removedNodes){
-                if (node.role==="log"&&node.tagName==="div"){
-                    if (process_state==="ongoing") {
-                        conversations[conversation].clear();
-                        await initialize_chatRegion_and_conversation();
-                        obs.disconnect();
-                        obs.observe(chatParent,{childList:true})
-                        process_state="idle";
-                    }
-                }
-            }
-        }
-    });            
-
-    observer.observe(chatParent,{childList:true});
-
+*/
     async function nextConversation(){
         let next_convo_link;
         let current_identifer=find_current_identifier(c_list_labelled);
@@ -323,11 +334,11 @@ async function initialize(){
             let c_link=`https://facebook.com${c_identifier}`;
             if (c_is_current){ //branching for loads
                 if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true};
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,addedCheckbox:false};
             }
             else {
                 if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false};
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,addedCheckbox:false};
             }
         }
         updateProcessingList(c_list_labelled);
