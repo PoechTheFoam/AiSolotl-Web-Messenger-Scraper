@@ -15,6 +15,7 @@ async function initialize(){
     let c_list_labelled={}
     let processing_list=[];
     let process_state="idle"; 
+    let signals;
 
     async function initialize_chatRegion_and_conversation(){
         chatRegion= await waitForElement("div[role='log']");
@@ -42,6 +43,11 @@ async function initialize(){
 
     async function gatherData(){
         await initialize_chatRegion_and_conversation();
+        if (document.querySelector("#jajajaggezbozo")) return;
+        const dupe_preventor=document.createElement("div");
+        dupe_preventor.id="jajajaggezbozo";
+        document.body.append(dupe_preventor);
+        signals=await loadSignals();
         conversations=await loadConversations();
         c_list_labelled=await loadLabelledList();
         updateProcessingList(c_list_labelled);
@@ -62,6 +68,7 @@ async function initialize(){
                     }
                     if (node.querySelector("a[role='link'][aria-current][href]")) {
                         console.log(node.getAttribute("href")," conversation removed");
+                        console.log(node, "conversation removed");
                     }
                 }
             }
@@ -111,22 +118,47 @@ async function initialize(){
         }
     }
 
-    //note this architecture in md later (no calling async for message listener's callback function)
-    chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
-        if (request.signal==="start_init") {
-            (async ()=>{
-                await gatherData();
-                sendResponse({
-                    status:"finished",
-                    c_list:c_list,
-                    c_list_labelled:c_list_labelled
-                }); //notes on this in md
-            })();
-            return true; // notes on this in md
+    chrome.storage.onChanged.addListener((changes,areaName)=>{
+        if (areaName==="local"){
+            for (const [key, {oldValue, newValue}] of Object.entries(changes)){
+                if (key==="signals"){
+                    const result=newValue; //there is no new value? (no changes?)
+                    if (!result) return;
+                    else {
+                        signals={init_signal:newValue?.init_signal?? "none", conv_signal:newValue?.conv_signal?? "none",sum_signal:newValue?.sum_signal?? "none"}
+                    }
+                }
+            }
         }
-        if (request.signal==="pick_conv"){
+    })
+
+    //note this architecture in md later (no calling async for message listener's callback function)
+
+    //replace onMessage listener with local storage listener? (message sending is not persistent)
+    //notes on this in md
+    let init_timer;
+    let init_timeout_timer;
+    chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
+        if (request.signal==="start_init") {(
+            async ()=>{
+                await gatherData()
+                let new_signals={init_signal:"finished"};
+                let signals={...signals,...new_signals};
+                await chrome.storage.local.set({signals:signals});
+            })();
+
+        }
+        if (request.signal==="pick_conv"){(async ()=>{
             addCheckboxes(c_list);
-            sendResponse({status:"finished"})
+            //sendResponse({sum_status:"finished"}) //replace sendResponse with setting to chrome.storage.local (for persistence)
+            let new_signals={}
+            await chrome.storage.local.set();
+        })();
+        }
+
+        if (request.signal==="sum_conv"){
+            // send data back to Python backend here
+            //replace sendResponse with setting to chrome.storage.local (for persistence)
         }
     })
 
@@ -503,12 +535,12 @@ async function saveConversations(conversations,c_list_labelled){
     AISOLOTL.platform["Messenger"]??= {}
     AISOLOTL.platform["Messenger"].conversations={...AISOLOTL.platform["Messenger"].conversations, ...conversations};
     AISOLOTL.platform["Messenger"].c_list_labelled={...AISOLOTL.platform["Messenger"].c_list_labelled, ...c_list_labelled};
-    console.log("AFTER WRITING");
+    /*console.log("AFTER WRITING");
     console.log(AISOLOTL.platform["Messenger"].conversations);
     console.log(AISOLOTL.platform["Messenger"].c_list_labelled);
-    console.log(AISOLOTL)
+    console.log(AISOLOTL)*/
     await chrome.storage.local.set({
-        AISOLOTL
+        AISOLOTL:AISOLOTL
     }).catch((error)=>{console.log(error)})
 }
 
@@ -524,6 +556,35 @@ async function loadLabelledList(){
     if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].c_list_labelled) return {}
     console.log(result.AISOLOTL.platform["Messenger"].c_list_labelled);
     return result.AISOLOTL.platform["Messenger"].c_list_labelled;
+}
+
+async function loadSignals(){
+    let output;
+        let rebuild=false;
+        //loading data & normalization
+        const result=await chrome.storage.local.get("signals");
+        if (!result||!result.signals) {
+            output={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
+            rebuild=true;
+        }
+        output=result.signals;
+        if (!result.signals.init_signal){
+            output={...output,...{init_signal:"none"}}
+            rebuild=true
+        }
+        if (!result.signals.conv_signal){
+            output={...output,...{conv_signal:"none"}} 
+            rebuild=true;
+        } 
+        if (!result.signals.sum_signal){
+            output={...output,...{sum_signal:"none"}} //maybe optional
+            rebuild=true;
+        }
+        if (!result.signals.scroll_amt_signal){
+            output={...output,...{scroll_amt_signal:"none"}} 
+            rebuild=true;
+        } 
+        if (rebuild) await chrome.storage.local.set({signals})
 }
 
 async function clearSavedConversations(){
