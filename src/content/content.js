@@ -121,11 +121,11 @@ async function initialize(){
     chrome.storage.onChanged.addListener((changes,areaName)=>{
         if (areaName==="local"){
             for (const [key, {oldValue, newValue}] of Object.entries(changes)){
-                if (key==="signals"){
-                    const result=newValue; //there is no new value? (no changes?)
+                if (key==="AISOLOTL"){
+                    const result=newValue.signals; //there is no new value? (no changes?)
                     if (!result) return;
                     else {
-                        signals={init_signal:newValue?.init_signal?? "none", conv_signal:newValue?.conv_signal?? "none",sum_signal:newValue?.sum_signal?? "none"}
+                        signals={init_signal:result?.init_signal?? "none", conv_signal:result?.conv_signal?? "none", scroll_amt_signal:result?.scroll_amt_signal?? "none", sum_signal:result?.sum_signal?? "none"}
                     }
                 }
             }
@@ -151,8 +151,9 @@ async function initialize(){
         if (request.signal==="pick_conv"){(async ()=>{
             addCheckboxes(c_list);
             //sendResponse({sum_status:"finished"}) //replace sendResponse with setting to chrome.storage.local (for persistence)
-            let new_signals={}
-            await chrome.storage.local.set();
+            let new_signals={conv_signal:"finished"};
+            await chrome.storage.local.set({AISOLOTL:AISOLOTL}); //=> Must read from AISOLOTL first
+            //or await chrome.storage.local.set({signals:new_signals});? -> does it know where to look automatically?
         })();
         }
 
@@ -562,29 +563,30 @@ async function loadSignals(){
     let output;
         let rebuild=false;
         //loading data & normalization
-        const result=await chrome.storage.local.get("signals");
-        if (!result||!result.signals) {
-            output={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
+        const result=await chrome.storage.local.get("AISOLOTL");
+        let AISOLOTL=result?.AISOLOTL?? {};
+        if (!AISOLOTL.signals) { //if signals doesn't exist
+            AISOLOTL.signals={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
             rebuild=true;
         }
-        output=result.signals;
-        if (!result.signals.init_signal){
-            output={...output,...{init_signal:"none"}}
+        if (!AISOLOTL.signals.init_signal){
+            AISOLOTL.signals.init_signal={...AISOLOTL.signals,...{init_signal:"none"}}
             rebuild=true
         }
-        if (!result.signals.conv_signal){
-            output={...output,...{conv_signal:"none"}} 
+        if (!AISOLOTL.signals.conv_signal){
+            AISOLOTL.signals.conv_signal={...AISOLOTL.signals,...{conv_signal:"none"}} 
             rebuild=true;
         } 
-        if (!result.signals.sum_signal){
-            output={...output,...{sum_signal:"none"}} //maybe optional
+        if (!AISOLOTL.signals.sum_signal){
+            AISOLOTL.signals.sum_signal={...AISOLOTL.signals,...{sum_signal:"none"}} //maybe optional
             rebuild=true;
         }
-        if (!result.signals.scroll_amt_signal){
-            output={...output,...{scroll_amt_signal:"none"}} 
+        if (!AISOLOTL.signals.scroll_amt_signal){
+            AISOLOTL.signals.scroll_amt_signal={...AISOLOTL.signals,...{scroll_amt_signal:"none"}} 
             rebuild=true;
         } 
-        if (rebuild) await chrome.storage.local.set({signals})
+
+        if (rebuild) await chrome.storage.local.set({AISOLOTL:AISOLOTL});
 }
 
 async function clearSavedConversations(){

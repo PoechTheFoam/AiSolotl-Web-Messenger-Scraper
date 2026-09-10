@@ -7,7 +7,7 @@ document.addEventListener("DOMContentLoaded", async function(){
     let indicator=document.querySelector("#indicator");
     let loading_text=indicator.querySelector("[class='loading_text']");
     let original_text=loading_text.innerText;
-    let signals=await loadSignals();
+    let signals=await loadSignals(); //=AISOLOTL.signals
 
 
     let conv_picked={}
@@ -17,15 +17,15 @@ document.addEventListener("DOMContentLoaded", async function(){
     chrome.storage.onChanged.addListener((changes,areaName)=>{
     if (areaName==="local"){
         for (const [key, {oldValue, newValue}] of Object.entries(changes)){
-            if (key==="signals"){
-                const result=newValue; //there is no new value? (no changes?)
+            if (key==="AISOLOTL"){ //AISOLOTL, key=signals.
+                const result=newValue.signals; //there is no new value? (no changes?)
                 if (!result) return;
                 else {
-                    signals={init_signal:newValue?.init_signal?? "none", conv_signal: newValue?.conv_signal?? "none", scroll_amt_signal:newValue?.scroll_amt_input_signal?? "none",sum_signal:newValue?.sum_signal?? "none"}
+                    signals={init_signal:result?.init_signal?? "none", conv_signal: result?.conv_signal?? "none", scroll_amt_signal:result?.scroll_amt_signal?? "none",sum_signal:result?.sum_signal?? "none"}
                 }
                 refreshInit_btn();
                 refreshConv_picker();
-                refresh 
+                //refresh for scroll_amt may not be necessary.
                 refreshSum_btn();
                 
                 
@@ -84,11 +84,6 @@ document.addEventListener("DOMContentLoaded", async function(){
                 return;
             }
             const response=await chrome.tabs.sendMessage(tab.id,{signal:"pick_conv"});
-            if(response.status==="finished"){
-                indicator.style.display="none";
-                loading_text.textContent=original_text;
-            }
-
         }
         catch(error){
             loading_text.textContent="Failed to add checkboxes, please try again."
@@ -96,52 +91,51 @@ document.addEventListener("DOMContentLoaded", async function(){
         }
     })
 
-    scroll_amt_input.addEventListener("change", ()=>{
-
+    scroll_amt_input.addEventListener("input", async (event)=>{
+        let scroll_amt=event.target.valueAsNumber;
+        try{
+            const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+            if (!tab){
+                console.error("No active tabs to gather data from, please switch your current tab to Messenger and try again.");
+                return;
+            }
+            const response=await chrome.tabs.sendMessage(tab.id,{signal:"input_scroll_amt"});
+        }
+        catch (error){
+            loading_text.textContent="Failed to parse/receive scroll amount, please try again."
+            console.error(error);
+        }
     })
 
     async function loadSignals(){
         let output;
         let rebuild=false;
         //loading data & normalization
-        const result=await chrome.storage.local.get("signals");
-        if (!result||!result.signals) {
-            output={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
+        const result=await chrome.storage.local.get("AISOLOTL");
+        let AISOLOTL=result?.AISOLOTL?? {};
+        if (!AISOLOTL.signals) { //if signals doesn't exist
+            AISOLOTL.signals={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
             rebuild=true;
         }
-        output=result.signals;
-        if (!result.signals.init_signal){
-            output={...output,...{init_signal:"none"}}
+        if (!AISOLOTL.signals.init_signal){
+            AISOLOTL.signals.init_signal={...AISOLOTL.signals,...{init_signal:"none"}}
             rebuild=true
         }
-        if (!result.signals.conv_signal){
-            output={...output,...{conv_signal:"none"}} 
+        if (!AISOLOTL.signals.conv_signal){
+            AISOLOTL.signals.conv_signal={...AISOLOTL.signals,...{conv_signal:"none"}} 
             rebuild=true;
         } 
-        if (!result.signals.sum_signal){
-            output={...output,...{sum_signal:"none"}} //maybe optional
+        if (!AISOLOTL.signals.sum_signal){
+            AISOLOTL.signals.sum_signal={...AISOLOTL.signals,...{sum_signal:"none"}} //maybe optional
             rebuild=true;
         }
-        if (!result.signals.scroll_amt_signal){
-            output={...output,...{scroll_amt_signal:"none"}} 
+        if (!AISOLOTL.signals.scroll_amt_signal){
+            AISOLOTL.signals.scroll_amt_signal={...AISOLOTL.signals,...{scroll_amt_signal:"none"}} 
             rebuild=true;
         } 
-        
-        if (!rebuild) await chrome.storage.local.set({signals:output});
 
-        //1. init_btn
-        refreshInit_btn();
-
-        //2. conv_picker
-        refreshConv_picker();
-
-        //2a. (OPTIONAL?) scroll_amt_input
-        refreshScroll_amt_input();
-
-        //3. sum_btn
-        refreshSum_btn();
-
-        //handle logic to re-enable init_btn later (after init_btn finishes initializing!!)
+        if (rebuild) await chrome.storage.local.set({AISOLOTL:AISOLOTL});
+        return AISOLOTL.signals;
     }
 
     function refreshInit_btn(){
@@ -204,7 +198,12 @@ document.addEventListener("DOMContentLoaded", async function(){
     }
 
     async function saveSignals(signals){
-        await chrome.storage.local.set({signals:signals});
+        const result=await chrome.storage.local.get("AISOLOTL");
+        let AISOLOTL=result?.AISOLOTL?? {};
+        AISOLOTL={...AISOLOTL,
+            signals:(AISOLOTL.signals?? {}),...signals};
+
+        await chrome.storage.local.set({AISOLOTL:AISOLOTL});
     }
     
 });
