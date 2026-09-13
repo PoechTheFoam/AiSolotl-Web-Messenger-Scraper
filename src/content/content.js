@@ -1,6 +1,4 @@
-//clearSavedConversations();
 initialize();
-
 // assuming that user has conversations + chats and previously chatted with sb in messenger layout
 // assuming using full Messenger layout (not mini messenger in facebook layout)
 
@@ -15,7 +13,40 @@ async function initialize(){
     let c_list_labelled={}
     let processing_list=[];
     let process_state="idle"; 
+    let scroll_amt=7; //default to 7 here or not unknown
     let signals;
+
+    chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
+        if (request.signal==="clear"){(
+            async()=>{await clearSavedData(); })();
+        }
+        if (request.signal==="pick_conv"){
+            (async ()=>{
+            addCheckboxes(c_list);
+            await saveSignals({conv_signal:"finished"})
+        })();
+        }
+
+        if (request.signal==="input_scroll_amt"){(
+            async()=>{
+                scroll_amt=request.scroll_amt;
+                await saveSignals({scroll_amt_signal:"finished"});
+            }
+        )()}
+
+        if (request.signal==="sum_conv"){
+            // send data back to Python backend here
+            //replace sendResponse with setting to chrome.storage.local (for persistence)
+            (async()=>{
+                await saveSignals({sum_signal:"finished"});
+            })();
+        }
+    })
+
+
+    await gatherData();
+    await saveConversations(conversations,c_list_labelled);
+    await saveSignals({init_signal:"finished"});
 
     async function initialize_chatRegion_and_conversation(){
         chatRegion= await waitForElement("div[role='log']");
@@ -55,22 +86,6 @@ async function initialize(){
         const observer=new MutationObserver((mutations, obs)=>{
             for (const m of mutations){
                 console.log("c_list_container mutation detected")
-                for (const node of m.removedNodes){
-                    if (node.classList?.contains("conv_picker")||node.querySelector(".conv_picker")){
-                        const id=node.id;
-                        let checkbox=document.createElement("input");
-                        checkbox.type="checkbox";
-                        checkbox.class="conv_picker";
-                        checkbox.id=id;
-                        checkbox.checked=c_list_labelled[id].chosen;
-                        let c=document.querySelector(`[href="${id}"]`);
-                        c.insertAdjacentElement("beforebegin",checkbox);
-                    }
-                    if (node.querySelector("a[role='link'][aria-current][href]")) {
-                        console.log(node.getAttribute("href")," conversation removed");
-                        console.log(node, "conversation removed");
-                    }
-                }
             }
         })
         observer.observe(c_list_container,{
@@ -85,11 +100,11 @@ async function initialize(){
             clearTimeout(timer);
             timer=setTimeout(async ()=>{
                 await updateCheckboxes();
-            },3000)
+            },1500)
             timeout_timer=setTimeout(async ()=>{
                 clearTimeout(timer);
                 await updateCheckboxes();
-            },15000)
+            },5000)
         })
 
         c_list_container.addEventListener("change",(event)=>{
@@ -118,7 +133,7 @@ async function initialize(){
         }
     }
 
-    chrome.storage.onChanged.addListener((changes,areaName)=>{
+    /*chrome.storage.onChanged.addListener((changes,areaName)=>{
         if (areaName==="local"){
             for (const [key, {oldValue, newValue}] of Object.entries(changes)){
                 if (key==="AISOLOTL"){
@@ -130,39 +145,21 @@ async function initialize(){
                 }
             }
         }
-    })
+    })*/ //may beunnecessary in content.js
 
     //note this architecture in md later (no calling async for message listener's callback function)
 
     //replace onMessage listener with local storage listener? (message sending is not persistent)
     //notes on this in md
-    let init_timer;
-    let init_timeout_timer;
-    chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
-        if (request.signal==="start_init") {(
-            async ()=>{
-                await gatherData()
-                let new_signals={init_signal:"finished"};
-                let signals={...signals,...new_signals};
-                await chrome.storage.local.set({signals:signals});
-            })();
 
-        }
-        if (request.signal==="pick_conv"){(async ()=>{
-            addCheckboxes(c_list);
-            //sendResponse({sum_status:"finished"}) //replace sendResponse with setting to chrome.storage.local (for persistence)
-            let new_signals={conv_signal:"finished"};
-            await chrome.storage.local.set({AISOLOTL:AISOLOTL}); //=> Must read from AISOLOTL first
-            //or await chrome.storage.local.set({signals:new_signals});? -> does it know where to look automatically?
-        })();
-        }
-
-        if (request.signal==="sum_conv"){
-            // send data back to Python backend here
-            //replace sendResponse with setting to chrome.storage.local (for persistence)
-        }
-    })
-
+    async function saveSignals(signals){ // signals are different to signals sent in chrome.sendMessage
+        const result=await chrome.storage.local.get("AISOLOTL");
+        let AISOLOTL=result?.AISOLOTL?? {};
+        AISOLOTL={...AISOLOTL,
+                    signals:{...(AISOLOTL.signals?? {}),...signals}
+        };
+        await chrome.storage.local.set({AISOLOTL:AISOLOTL});
+    }
 
     /*console.log(await chrome.storage.local.get(null));
     console.log("conversastions: ",structuredClone(conversations));
@@ -487,7 +484,7 @@ function waitForElement(selector){
             resolve(target);
         }
     });
-    observer.observe(document.body,{
+    observer.observe(document.documentElement,{
         childList:true,
         subtree:true
     });
@@ -589,6 +586,7 @@ async function loadSignals(){
         if (rebuild) await chrome.storage.local.set({AISOLOTL:AISOLOTL});
 }
 
-async function clearSavedConversations(){
-    await chrome.storage.local.clear();
+async function clearSavedData(){
+    let AISOLOTL={platform:{},signals:{init_signal:"none",conv_signal:"none",scroll_amt_signal:"none",sum_signal:"none"}}
+    await chrome.storage.local.set({AISOLOTL:AISOLOTL});
 }
