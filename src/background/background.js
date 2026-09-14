@@ -11,3 +11,8 @@ let payload={
     platform:platform,
     conversations:conversations
 }*/
+chrome.runtime.onInstalled.addListener(async()=>{
+    await chrome.storage.session.setAccessLevel({
+    accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS"
+});
+})

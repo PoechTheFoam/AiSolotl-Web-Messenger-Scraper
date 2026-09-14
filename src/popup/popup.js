@@ -11,7 +11,7 @@ document.addEventListener("DOMContentLoaded", async function(){
     refreshUI();
 
     chrome.storage.onChanged.addListener((changes,areaName)=>{
-    if (areaName==="local"){
+    if (areaName==="session"){
         for (const [key, {oldValue, newValue}] of Object.entries(changes)){
             if (key==="AISOLOTL"){ //AISOLOTL, key=signals.
                 const result=newValue?.signals?? {}; //there is no new value? (no changes?)
@@ -96,7 +96,7 @@ document.addEventListener("DOMContentLoaded", async function(){
     async function loadSignals(){
         let rebuild=false;
         //loading data & normalization
-        const result=await chrome.storage.local.get("AISOLOTL");
+        const result=await chrome.storage.session.get("AISOLOTL");
         let AISOLOTL=result?.AISOLOTL?? {};
         if (!AISOLOTL.signals) { //if signals doesn't exist
             AISOLOTL.signals={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
@@ -119,7 +119,7 @@ document.addEventListener("DOMContentLoaded", async function(){
             rebuild=true;
         } 
 
-        if (rebuild) await chrome.storage.local.set({AISOLOTL:AISOLOTL});
+        if (rebuild) await chrome.storage.session.set({AISOLOTL:AISOLOTL});
         return AISOLOTL.signals;
     }
 
@@ -175,13 +175,13 @@ document.addEventListener("DOMContentLoaded", async function(){
         
     }
 
-    async function saveSignals(signals){ // signals are different to signals sent in chrome.sendMessage
-        const result=await chrome.storage.local.get("AISOLOTL");
+    async function saveSignals(signals_saved){ // signals are different to signals sent in chrome.sendMessage
+        const result=await chrome.storage.session.get("AISOLOTL");
         let AISOLOTL=result?.AISOLOTL?? {};
+        let signals=AISOLOTL?.signals?? {};
         AISOLOTL={...AISOLOTL,
-                    signals:{...(AISOLOTL.signals?? {}),...signals}
+            signals:{...signals,...signals_saved}}
+        await chrome.storage.session.set({AISOLOTL});
         };
-        await chrome.storage.local.set({AISOLOTL:AISOLOTL});
     }
-    
-});
+);

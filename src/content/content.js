@@ -14,17 +14,48 @@ async function initialize(){
     let processing_list=[];
     let process_state="idle"; 
     let scroll_amt=7; //default to 7 here or not unknown
-    let signals;
 
+    let timer;
+    let timeout_timer;
+    let pick_conv_observer=undefined;
     chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
         if (request.signal==="clear"){(
-            async()=>{await clearSavedData(); })();
+            async()=>{await clearSavedData();})();
         }
         if (request.signal==="pick_conv"){
             (async ()=>{
             addCheckboxes(c_list);
+            if (!pick_conv_observer){
+                pick_conv_observer=new MutationObserver((mutations, obs)=>{
+                console.log("c_list_container mutation detected");
+                //maybe add code here for target=checkbox later
+                clearTimeout(timer);
+                clearTimeout(timeout_timer);
+                timer=setTimeout(async ()=>{
+                    await updateCheckboxes();
+                },300)
+                timeout_timer=setTimeout(async ()=>{
+                    clearTimeout(timer);
+                    await updateCheckboxes();
+                },1500)
+            })
+            pick_conv_observer.observe(c_list_container,{
+                childList:true,
+                subtree:true
+            })
+            
+            c_list_container.addEventListener("change",(event)=>{
+                console.log("checkbox change detected");
+                const target=event.target;
+                if (!target.classList.contains("conv_picker")) return;
+                const id=target.id;
+                console.log("before toggle",c_list_labelled[id].chosen);
+                c_list_labelled[id].chosen=target.checked;
+                console.log("after toggle",c_list_labelled[id].chosen);
+            });
+            }
             await saveSignals({conv_signal:"finished"})
-        })();
+            })();
         }
 
         if (request.signal==="input_scroll_amt"){(
@@ -83,36 +114,6 @@ async function initialize(){
         c_list_labelled=await loadLabelledList();
         updateProcessingList(c_list_labelled);
         await initialize_conversations();
-        const observer=new MutationObserver((mutations, obs)=>{
-            for (const m of mutations){
-                console.log("c_list_container mutation detected")
-            }
-        })
-        observer.observe(c_list_container,{
-            childList:true,
-            subtree:true
-        })
-
-        let timer;
-        let timeout_timer;
-
-        c_list_container.addEventListener("scroll", (event)=>{
-            clearTimeout(timer);
-            timer=setTimeout(async ()=>{
-                await updateCheckboxes();
-            },1500)
-            timeout_timer=setTimeout(async ()=>{
-                clearTimeout(timer);
-                await updateCheckboxes();
-            },5000)
-        })
-
-        c_list_container.addEventListener("change",(event)=>{
-            const target=event.target;
-            if (!target.classList.contains("conv_picker")) return;
-            const id=target.id;
-            c_list_labelled[id].chosen=target.checked;
-        })
     }
 
     async function updateCheckboxes(){
@@ -123,12 +124,14 @@ async function initialize(){
     function addCheckboxes(){
         for (const [key,value] of Object.entries(c_list_labelled)){
             let c=document.querySelector(`[href="${key}"]`)
-            if (!c.querySelector(".conv_picker")){
+            if (!c) continue;
+            let prev=c?.previousElementSibling;
+            if (!prev?.classList?.contains("conv_picker")){
                 let checkbox=document.createElement("input");
                 checkbox.type="checkbox";
-                checkbox.class="conv_picker";
+                checkbox.classList.add("conv_picker");
                 checkbox.id=key;
-                c.insertAdjacentElement("beforebegin",checkbox);
+                c.before(checkbox);
             }
         }
     }
@@ -151,15 +154,6 @@ async function initialize(){
 
     //replace onMessage listener with local storage listener? (message sending is not persistent)
     //notes on this in md
-
-    async function saveSignals(signals){ // signals are different to signals sent in chrome.sendMessage
-        const result=await chrome.storage.local.get("AISOLOTL");
-        let AISOLOTL=result?.AISOLOTL?? {};
-        AISOLOTL={...AISOLOTL,
-                    signals:{...(AISOLOTL.signals?? {}),...signals}
-        };
-        await chrome.storage.local.set({AISOLOTL:AISOLOTL});
-    }
 
     /*console.log(await chrome.storage.local.get(null));
     console.log("conversastions: ",structuredClone(conversations));
@@ -542,6 +536,15 @@ async function saveConversations(conversations,c_list_labelled){
     }).catch((error)=>{console.log(error)})
 }
 
+async function saveSignals(signals_saved){ // signals are different to signals sent in chrome.sendMessage
+    const result=await chrome.storage.session.get("AISOLOTL");
+    let AISOLOTL=result?.AISOLOTL?? {};
+    AISOLOTL={...AISOLOTL,
+                signals:{...(AISOLOTL.signals?? {}),...signals_saved}
+    };
+    await chrome.storage.session.set({AISOLOTL:AISOLOTL});
+}
+
 async function loadConversations(){
     const result=await chrome.storage.local.get("AISOLOTL");
     if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].conversations) return {}
@@ -556,37 +559,36 @@ async function loadLabelledList(){
     return result.AISOLOTL.platform["Messenger"].c_list_labelled;
 }
 
-async function loadSignals(){
-    let output;
+    async function loadSignals(){
         let rebuild=false;
         //loading data & normalization
-        const result=await chrome.storage.local.get("AISOLOTL");
+        const result=await chrome.storage.session.get("AISOLOTL");
         let AISOLOTL=result?.AISOLOTL?? {};
         if (!AISOLOTL.signals) { //if signals doesn't exist
             AISOLOTL.signals={init_signal:"none",conv_signal:"none",sum_signal:"none",scroll_amt_signal:"none"};
             rebuild=true;
         }
         if (!AISOLOTL.signals.init_signal){
-            AISOLOTL.signals.init_signal={...AISOLOTL.signals,...{init_signal:"none"}}
+            AISOLOTL.signals={...AISOLOTL.signals,...{init_signal:"none"}}
             rebuild=true
         }
         if (!AISOLOTL.signals.conv_signal){
-            AISOLOTL.signals.conv_signal={...AISOLOTL.signals,...{conv_signal:"none"}} 
+            AISOLOTL.signals={...AISOLOTL.signals,...{conv_signal:"none"}} 
             rebuild=true;
         } 
         if (!AISOLOTL.signals.sum_signal){
-            AISOLOTL.signals.sum_signal={...AISOLOTL.signals,...{sum_signal:"none"}} //maybe optional
+            AISOLOTL.signals={...AISOLOTL.signals,...{sum_signal:"none"}} //maybe optional
             rebuild=true;
         }
         if (!AISOLOTL.signals.scroll_amt_signal){
-            AISOLOTL.signals.scroll_amt_signal={...AISOLOTL.signals,...{scroll_amt_signal:"none"}} 
+            AISOLOTL.signals={...AISOLOTL.signals,...{scroll_amt_signal:"none"}} 
             rebuild=true;
         } 
 
-        if (rebuild) await chrome.storage.local.set({AISOLOTL:AISOLOTL});
-}
+        if (rebuild) await chrome.storage.session.set({AISOLOTL:AISOLOTL});
+    }
 
 async function clearSavedData(){
-    let AISOLOTL={platform:{},signals:{init_signal:"none",conv_signal:"none",scroll_amt_signal:"none",sum_signal:"none"}}
-    await chrome.storage.local.set({AISOLOTL:AISOLOTL});
+    let AISOLOTL={platform:{}}
+    await chrome.storage.local.set({AISOLOTL});
 }
