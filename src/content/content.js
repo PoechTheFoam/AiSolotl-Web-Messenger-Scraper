@@ -12,12 +12,14 @@ async function initialize(){
     let c_list=[]; 
     let c_list_labelled={}
     let processing_list=[];
-    let process_state="idle"; 
+    let process_state;
     let scroll_amt=7; //default to 7 here or not unknown
 
     let timer;
     let timeout_timer;
     let pick_conv_observer=undefined;
+
+
     chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
         if (request.signal==="clear"){(
             async()=>{await clearSavedData();})();
@@ -25,6 +27,7 @@ async function initialize(){
         if (request.signal==="pick_conv"){
             (async ()=>{
             addCheckboxes(c_list);
+            await saveSignals({conv_signal:"waiting for user input"});
             if (!pick_conv_observer){
                 pick_conv_observer=new MutationObserver((mutations, obs)=>{
                 console.log("c_list_container mutation detected");
@@ -33,43 +36,76 @@ async function initialize(){
                 clearTimeout(timeout_timer);
                 timer=setTimeout(async ()=>{
                     await updateCheckboxes();
-                },300)
+                },100)
                 timeout_timer=setTimeout(async ()=>{
                     clearTimeout(timer);
                     await updateCheckboxes();
-                },1500)
+                },200)
             })
             pick_conv_observer.observe(c_list_container,{
                 childList:true,
                 subtree:true
             })
             
-            c_list_container.addEventListener("change",(event)=>{
+            c_list_container.addEventListener("change",async(event)=>{
                 console.log("checkbox change detected");
                 const target=event.target;
                 if (!target.classList.contains("conv_picker")) return;
                 const id=target.id;
-                console.log("before toggle",c_list_labelled[id].chosen);
                 c_list_labelled[id].chosen=target.checked;
-                console.log("after toggle",c_list_labelled[id].chosen);
+                saveConversations(conversations,c_list_labelled)
+
+                console.log("p_list before update: ",structuredClone(processing_list));
+                updateProcessingList(c_list_labelled);
+                console.log("p_list after update: ",structuredClone(processing_list));
+                if (processing_list.length>0) {
+                    console.log("SAVING FINISHED");
+                    await saveSignals({conv_signal:"finished"});
+                }
+                else {
+                    console.log("SAVING SIGNAL")
+                    await saveSignals({conv_signal:"waiting for user input"})
+                }
+                for (const [key,value] of Object.entries(c_list_labelled)){
+                    if (value.chosen) console.log("Conv ",key,": ",value.chosen);
+                }
             });
             }
-            await saveSignals({conv_signal:"finished"})
             })();
         }
 
         if (request.signal==="input_scroll_amt"){(
             async()=>{
                 scroll_amt=request.scroll_amt;
+                console.log("scroll_amt ",scroll_amt);
                 await saveSignals({scroll_amt_signal:"finished"});
             }
         )()}
 
-        if (request.signal==="sum_conv"){
+        if (request.signal==="sum_start"){
+            // start scrolling convos + switching convos here
+            // save the data
             // send data back to Python backend here
-            //replace sendResponse with setting to chrome.storage.local (for persistence)
             (async()=>{
-                await saveSignals({sum_signal:"finished"});
+                await saveState("ongoing");
+                //check if processing_list[0] is current
+                let c=processing_list[0] //initially this is always guaranteed true
+                if (!c_list_labelled[c].current){
+                    let next_convo_link;
+                    next_convo_link=find_next_link(c_list_labelled,c);
+                    window.location.href=next_convo_link;
+                }
+                await processConversation(conversation);
+                c_list_labelled[c].processed=true;
+                saveConversations(conversations,c_list_labelled);
+                updateProcessingList(c_list_labelled);
+                if (processing_list.length===0){
+                    await saveSignals({sum_signal:"finished"});
+                    return;
+                }
+                let next_c=processing_list[0];
+                let next_convo_link=find_next_link(c_list_labelled,next_c);
+                window.location.href=next_convo_link;
             })();
         }
     })
@@ -78,22 +114,58 @@ async function initialize(){
     await gatherData();
     await saveConversations(conversations,c_list_labelled);
     await saveSignals({init_signal:"finished"});
+    if (process_state==="ongoing"){
+        if (processing_list.length===0){
+            await saveConversations(conversations,c_list_labelled);
+            conversations=await loadConversations();
+
+            const payload={
+                platform:"Messenger",
+                conversations:conversations
+            }
+            console.log(payload);
+
+            const response= await fetch("http://localhost:8000/echo", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            await saveSignals({sum_signal:"finished"});
+            return;
+        }
+        await processConversation(conversation);
+        let c= processing_list[0];
+        c_list_labelled[c].processed=true;
+        saveConversations(conversations,c_list_labelled);
+        updateProcessingList(c_list_labelled);
+        if (processing_list.length===0){
+            await saveSignals({sum_signal:"finished"});
+            return;
+        }
+        let next_c=processing_list[0];
+        let next_convo_link=find_next_link(c_list_labelled,next_c);
+        window.location.href=next_convo_link;
+    }
+
 
     async function initialize_chatRegion_and_conversation(){
         chatRegion= await waitForElement("div[role='log']");
         chatParent=chatRegion.parentElement;
         conversation=chatRegion.getAttribute("aria-label");
-            const observer = new MutationObserver(async (mutations,obs)=>{
+        const observer = new MutationObserver(async (mutations,obs)=>{
         for (const m of mutations){
             console.log("chatParent mutation detected")
             for (const node of m.removedNodes){
-                if (node.role==="log"&&node.tagName==="div"){
+                if (node.getAttribute?.("role")==="log"&&node.tagName==="DIV"){
                     if (process_state==="ongoing") {
-                        conversations[conversation].clear();
-                        await initialize_chatRegion_and_conversation();
+                        conversations[conversation]={};
                         obs.disconnect();
-                        obs.observe(chatParent,{childList:true,subtree:true})
+                        await initialize_chatRegion_and_conversation();
                         process_state="idle";
+                        //unfinished edge case
                     }
                 }
             }
@@ -112,13 +184,44 @@ async function initialize(){
         signals=await loadSignals();
         conversations=await loadConversations();
         c_list_labelled=await loadLabelledList();
+        process_state=await loadState;
         updateProcessingList(c_list_labelled);
         await initialize_conversations();
     }
 
     async function updateCheckboxes(){
-        await initialize_conversations();
+        refreshConvos();
         addCheckboxes();
+        updateProcessingList(c_list_labelled);
+    }
+
+    function refreshConvos(){
+        const selector = "[aria-label][role='navigation']";
+        console.log("A1");
+        c_list_container=[...document.querySelectorAll(selector)]?.[2];
+        console.log("B1");
+        let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]")
+        c_list=[...cand];
+        for (const c of c_list){
+            let c_is_current=false;
+            let name;
+            let spanList=c.querySelectorAll("span[dir]")
+            for (const s of spanList){
+                if (conversation.includes(s.innerText)) name=s.innerText;
+            }
+            if (conversation.includes(name)) c_is_current=true;
+            let c_identifier=c.getAttribute("href");
+            let c_link=`https://facebook.com${c_identifier}`;
+            if (c_is_current){ //branching for loads
+                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
+            }
+            else {
+                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
+                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
+            }
+        }
+        updateProcessingList(c_list_labelled);
     }
 
     function addCheckboxes(){
@@ -136,19 +239,6 @@ async function initialize(){
         }
     }
 
-    /*chrome.storage.onChanged.addListener((changes,areaName)=>{
-        if (areaName==="local"){
-            for (const [key, {oldValue, newValue}] of Object.entries(changes)){
-                if (key==="AISOLOTL"){
-                    const result=newValue.signals; //there is no new value? (no changes?)
-                    if (!result) return;
-                    else {
-                        signals={init_signal:result?.init_signal?? "none", conv_signal:result?.conv_signal?? "none", scroll_amt_signal:result?.scroll_amt_signal?? "none", sum_signal:result?.sum_signal?? "none"}
-                    }
-                }
-            }
-        }
-    })*/ //may beunnecessary in content.js
 
     //note this architecture in md later (no calling async for message listener's callback function)
 
@@ -156,7 +246,7 @@ async function initialize(){
     //notes on this in md
 
     /*console.log(await chrome.storage.local.get(null));
-    console.log("conversastions: ",structuredClone(conversations));
+    console.log("conversations: ",structuredClone(conversations));
     console.log("conversations: ",structuredClone(conversations));
     console.log("c_list_labelled: ",structuredClone(c_list_labelled))
     console.log("processing_list: ", structuredClone(processing_list))*/
@@ -168,6 +258,7 @@ async function initialize(){
         let scrollAnchor=undefined;
         let cur_conv=chatRegion.getAttribute("aria-label")
         if (conversation!=cur_conv) return;
+        console.log("Beginning gathering messages data");
         function getMessagesData(conversation,tables){
         let output={}
         let innerCounter=0;
@@ -265,19 +356,19 @@ async function initialize(){
         return output;
         }
         if (first_session){
-            while (first_session&&counter<7){
+            while (first_session&&counter<scroll_amt){
             scrollAnchor=undefined;
             tables = await waitForElementsSettle(chatRegion);
-            //console.log("New data: ",structuredClone(getMessagesData(conversation,tables)));
-            //console.log("Old data: ", structuredClone(conversations[conversation]))
+            console.log("New data: ",structuredClone(getMessagesData(conversation,tables)));
+            console.log("Old data: ", structuredClone(conversations[conversation]))
             conversations[conversation]= {...(getMessagesData(conversation,tables)),...(conversations[conversation] ?? {})};
-            //console.log("Data post-write: ",structuredClone(conversations[conversation]))
+            console.log("Data post-write: ",structuredClone(conversations[conversation]))
             if (!scrollAnchor&&Object.keys(conversations[conversation]??{}).length>0) {
                 let anchorSelector=`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`;
-                //console.log("Inside 1st anchor check, chatRegion: ",chatRegion)
-                //console.log("Inside 1st anchor check, anchorSelector: ",anchorSelector);
-                scrollAnchor=chatRegion.querySelector(anchorSelector); // 
-                //console.log("Inside 1st anchor check, scrollAnchor: ",scrollAnchor);
+                console.log("Inside 1st anchor check, chatRegion: ",chatRegion)
+                console.log("Inside 1st anchor check, anchorSelector: ",anchorSelector);
+                scrollAnchor=chatRegion.querySelector(anchorSelector); 
+                console.log("Inside 1st anchor check, scrollAnchor: ",scrollAnchor);
             }
             if (scrollAnchor){
                 scrollAnchor?.scrollIntoView({
@@ -287,43 +378,23 @@ async function initialize(){
                 counter++;   
             }
             if (!scrollAnchor) {
-                /*console.log("Maximum reached: "+counter);
+                console.log("Maximum reached: "+counter);
                 console.log("Inside invalid anchor check, chatRegion: ",chatRegion);
                 console.log("Inside invalid anchor check, scrollAnchor written like 1st check: ", chatRegion.querySelector(`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`))
                 console.log("Inside invalid anchor check, scrollAnchor: ",scrollAnchor);
-                console.log("Inside invalid anchor check, id of earliest message: ",Object.keys(conversations[conversation])[0]);*/
+                console.log("Inside invalid anchor check, id of earliest message: ",Object.keys(conversations[conversation])[0]);
                 for (const [key,value] of Object.entries(conversations[conversation])){console.log(key+": "+value.content)};
                 break;
-            }
+            } //no completion checks/verification here
         }
-        if (counter===7){
+        if (counter===scroll_amt){
             console.log("First session completed:  "+counter);
             console.log(scrollAnchor);
         }
         }
     }
-/*
-    //place this inside signal sum_btn clicked
-    if (process_state==="idle"){
-                process_state="ongoing";
-                await processConversation(conversation);
-                await initialize_conversations();
-                await nextConversation();
-                if (process_state==="finished") obs.disconnect();
-                else {
-                    await initialize_chatRegion_and_conversation();
-                    obs.disconnect();
-                    obs.observe(chatRegion, {
-                    childList: true,
-                    attributes:true,
-                    attributeFilter:["aria-label"],
-                    subtree:true,
-                    });
-                    process_state="idle";
-                }
-                }
-*/
-    async function nextConversation(){
+
+    async function nextConversation(){ //potentially outdated bc processed=true line
         let next_convo_link;
         let current_identifer=find_current_identifier(c_list_labelled);
         c_list_labelled[current_identifer].processed=true; 
@@ -331,7 +402,7 @@ async function initialize(){
         updateProcessingList(c_list_labelled); //shold remove current from the list.
         if (processing_list.length===0){
             end_observing=true;
-            process_state="finished"
+            process_state="finished";
             return;
         } //no more convos to process
         let next_identifier=processing_list[0]; //always 
@@ -402,44 +473,44 @@ async function initialize(){
     c_list_container=[...await waitForElementsSettle2()]?.[2];
     console.log("B")
     console.log(c_list_container);
-    if (c_list.length<11){ // prototype limitation
-        let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]");
-        c_list=[...cand]; //prototype limitation
-        for (const c of c_list){
-            let c_is_current=false;
-            let name;
-            let spanList=c.querySelectorAll("span[dir]")
-            for (const s of spanList){
-                if (conversation.includes(s.innerText)) name=s.innerText;
-            }
-            console.log(conversation);
-            console.log(name);
-            if (conversation.includes(name)) c_is_current=true;
-            console.log(c_is_current);
-            let c_identifier=c.getAttribute("href");
-            console.log(c_identifier);
-            let c_link=`https://facebook.com${c_identifier}`;
-            if (c_is_current){ //branching for loads
-                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
-            }
-            else {
-                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
-            }
+    let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]");
+    c_list=[...cand];
+    for (const c of c_list){
+        let c_is_current=false;
+        let name;
+        let spanList=c.querySelectorAll("span[dir]")
+        for (const s of spanList){
+            if (conversation.includes(s.innerText)) name=s.innerText;
         }
+        console.log(conversation);
+        console.log(name);
+        if (conversation.includes(name)) c_is_current=true;
+        console.log(c_is_current);
+        let c_identifier=c.getAttribute("href");
+        console.log(c_identifier);
+        let c_link=`https://facebook.com${c_identifier}`;
+        if (c_is_current){ //branching for loads
+            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
+            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
+        }
+        else {
+            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
+            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
+        }
+    }
         updateProcessingList(c_list_labelled);
-        }
     }
     
-}
-
-function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplicates.
+    function updateProcessingList(c_list_labelled){ //reconstruct to prevent duplicates.
     processing_list=[]
     for (const [key,value] of Object.entries(c_list_labelled)){
-        if (!value.processed) processing_list.push(key); //c=identifier=href
+        if (!value.processed&&value.chosen) {
+            processing_list.push(key); //c=identifier=href
+            console.log("In queue for processing: ",key," chosen: ",value.chosen)
+        }
     }
     //automatically updates when function's called when c_list_labelled has been altered
+}
 }
 
 function delayWithInterruptions(){
@@ -525,15 +596,13 @@ async function saveConversations(conversations,c_list_labelled){
     let AISOLOTL=result?.AISOLOTL ?? {}
     AISOLOTL.platform ??= {}
     AISOLOTL.platform["Messenger"]??= {}
-    AISOLOTL.platform["Messenger"].conversations={...AISOLOTL.platform["Messenger"].conversations, ...conversations};
-    AISOLOTL.platform["Messenger"].c_list_labelled={...AISOLOTL.platform["Messenger"].c_list_labelled, ...c_list_labelled};
+    AISOLOTL.platform["Messenger"].conversations={...(AISOLOTL.platform["Messenger"].conversations ?? {}), ...conversations};
+    AISOLOTL.platform["Messenger"].c_list_labelled={...(AISOLOTL.platform["Messenger"].c_list_labelled ?? {}), ...c_list_labelled};
     /*console.log("AFTER WRITING");
     console.log(AISOLOTL.platform["Messenger"].conversations);
     console.log(AISOLOTL.platform["Messenger"].c_list_labelled);
     console.log(AISOLOTL)*/
-    await chrome.storage.local.set({
-        AISOLOTL:AISOLOTL
-    }).catch((error)=>{console.log(error)})
+    await chrome.storage.local.set({AISOLOTL}).catch((error)=>{console.log(error)})
 }
 
 async function saveSignals(signals_saved){ // signals are different to signals sent in chrome.sendMessage
@@ -542,7 +611,17 @@ async function saveSignals(signals_saved){ // signals are different to signals s
     AISOLOTL={...AISOLOTL,
                 signals:{...(AISOLOTL.signals?? {}),...signals_saved}
     };
+    console.log(AISOLOTL)
     await chrome.storage.session.set({AISOLOTL:AISOLOTL});
+}
+
+async function saveState(state_saved){
+    const result=await chrome.storage.local.get("AISOLOTL");
+    let AISOLOTL=result?.AISOLOTL ?? {}
+    AISOLOTL.platform ??= {}
+    AISOLOTL.platform["Messenger"]??= {}
+    AISOLOTL.platform["Messenger"].process_state=state_saved;
+    await chrome.storage.local.set({AISOLOTL});
 }
 
 async function loadConversations(){
@@ -559,7 +638,7 @@ async function loadLabelledList(){
     return result.AISOLOTL.platform["Messenger"].c_list_labelled;
 }
 
-    async function loadSignals(){
+async function loadSignals(){
         let rebuild=false;
         //loading data & normalization
         const result=await chrome.storage.session.get("AISOLOTL");
@@ -586,7 +665,13 @@ async function loadLabelledList(){
         } 
 
         if (rebuild) await chrome.storage.session.set({AISOLOTL:AISOLOTL});
-    }
+}
+
+async function loadState(){
+    const result=await chrome.storage.local.get("AISOLOTL");
+    if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].process_state) return "idle";
+    return result.AISOLOTL.platform["Messenger"].process_state;
+}
 
 async function clearSavedData(){
     let AISOLOTL={platform:{}}
