@@ -13,7 +13,7 @@ async function initialize(){
     let c_list_labelled={}
     let processing_list=[];
     let process_state;
-    let scroll_amt=7; //default to 7 here or not unknown
+    let scroll_amt;
 
     let timer;
     let timeout_timer;
@@ -53,7 +53,7 @@ async function initialize(){
                 if (!target.classList.contains("conv_picker")) return;
                 const id=target.id;
                 c_list_labelled[id].chosen=target.checked;
-                saveConversations(conversations,c_list_labelled)
+                await saveConversations(conversations,c_list_labelled)
 
                 console.log("p_list before update: ",structuredClone(processing_list));
                 updateProcessingList(c_list_labelled);
@@ -77,7 +77,7 @@ async function initialize(){
         if (request.signal==="input_scroll_amt"){(
             async()=>{
                 scroll_amt=request.scroll_amt;
-                console.log("scroll_amt ",scroll_amt);
+                await saveScroll_amt(scroll_amt);
                 await saveSignals({scroll_amt_signal:"finished"});
             }
         )()}
@@ -94,13 +94,19 @@ async function initialize(){
                     let next_convo_link;
                     next_convo_link=find_next_link(c_list_labelled,c);
                     window.location.href=next_convo_link;
+                    return;
                 }
+                //this branch is of the current convo is in processing_list, checked by 1st occurrence for simplicity.
                 await processConversation(conversation);
                 c_list_labelled[c].processed=true;
-                saveConversations(conversations,c_list_labelled);
+                await saveConversations(conversations,c_list_labelled);
                 updateProcessingList(c_list_labelled);
                 if (processing_list.length===0){
-                    await saveSignals({sum_signal:"finished"});
+                    await saveConversations(conversations,c_list_labelled);
+                    conversations=await loadConversations();
+                    await send_data(conversations);
+                    await saveSignals({sum_signal:"finished"})
+                    await saveState("idle")
                     return;
                 }
                 let next_c=processing_list[0];
@@ -112,42 +118,35 @@ async function initialize(){
 
 
     await gatherData();
-    await saveConversations(conversations,c_list_labelled);
+    console.log("Processing list: ",processing_list);
+    console.log("State: ",process_state);
+
     await saveSignals({init_signal:"finished"});
     if (process_state==="ongoing"){
         if (processing_list.length===0){
             await saveConversations(conversations,c_list_labelled);
             conversations=await loadConversations();
-
-            const payload={
-                platform:"Messenger",
-                conversations:conversations
-            }
-            console.log(payload);
-
-            const response= await fetch("http://localhost:8000/echo", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
-            });
-
-            await saveSignals({sum_signal:"finished"});
+            await send_data(conversations);
+            await saveSignals({sum_signal:"finished"})
+            await saveState("idle")
             return;
         }
         await processConversation(conversation);
-        let c= processing_list[0];
+        let c= find_current_identifier(c_list_labelled);
         c_list_labelled[c].processed=true;
-        saveConversations(conversations,c_list_labelled);
+        await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled);
         if (processing_list.length===0){
+            conversations=await loadConversations();
+            await send_data(conversations);
             await saveSignals({sum_signal:"finished"});
+            await saveState("idle")
             return;
         }
         let next_c=processing_list[0];
         let next_convo_link=find_next_link(c_list_labelled,next_c);
         window.location.href=next_convo_link;
+        return;
     }
 
 
@@ -177,14 +176,13 @@ async function initialize(){
 
     async function gatherData(){
         await initialize_chatRegion_and_conversation();
-        if (document.querySelector("#jajajaggezbozo")) return;
-        const dupe_preventor=document.createElement("div");
-        dupe_preventor.id="jajajaggezbozo";
-        document.body.append(dupe_preventor);
         signals=await loadSignals();
         conversations=await loadConversations();
         c_list_labelled=await loadLabelledList();
-        process_state=await loadState;
+        process_state=await loadState();
+        scroll_amt=await loadAmt();
+        
+        await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled);
         await initialize_conversations();
     }
@@ -257,7 +255,7 @@ async function initialize(){
         let counter=0;
         let scrollAnchor=undefined;
         let cur_conv=chatRegion.getAttribute("aria-label")
-        if (conversation!=cur_conv) return;
+        if (conversation!=cur_conv) {console.log("mismatch encountered: passed convo:",conversation," and current: ",cur_conv);return;}
         console.log("Beginning gathering messages data");
         function getMessagesData(conversation,tables){
         let output={}
@@ -412,7 +410,7 @@ async function initialize(){
         window.location.href=next_convo_link;
         //find conv that has attr "current=true"
         //find index of that conv, go into the next conv/return depending on logic
-    }
+    } //outdated function but reuseable idea
 
     function waitForElementsSettle2({stableForMs = 5000,timeoutMs = 30000} = {}) {
     return new Promise((resolve) => {
@@ -510,7 +508,57 @@ async function initialize(){
         }
     }
     //automatically updates when function's called when c_list_labelled has been altered
-}
+    }
+
+    async function delay(ms){
+        return new Promise((resolve)=>setTimeout(resolve,ms));
+    }
+
+    async function send_data(conversation_sent){
+        await resetConversationAttributes();
+        const payload={
+            platform:"Messenger",
+            conversations:conversation_sent
+        }
+        console.log("Sending payload: ", structuredClone(payload));
+        let amt=0;
+        const max_amt=3;
+        while (amt<=max_amt){
+            try{
+            const response= await fetch("http://localhost:8000/echo", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+        console.log("Response status: ",response.status);
+        let data=await response.json();
+        console.log("Backend response: ",data)
+            if (!response.ok){
+                //HTTP failure: server responded with 4xx or 5xx; or request reached backend but it failed/rejected
+                amt++;
+                await delay(3000);
+                continue;
+            }
+            else break;
+            
+        }catch(error){
+            //permissions failure/backend unavailable/network failure
+            amt++;
+            await delay(3000);
+            continue;
+        }
+        }
+    }
+
+    async function resetConversationAttributes(){
+        for (const [key,value] of Object.entries(c_list_labelled)){
+            value.processed=false;
+            value.chosen=false;
+        }
+        await saveConversations(conversations,c_list_labelled);
+    }
 }
 
 function delayWithInterruptions(){
@@ -605,6 +653,15 @@ async function saveConversations(conversations,c_list_labelled){
     await chrome.storage.local.set({AISOLOTL}).catch((error)=>{console.log(error)})
 }
 
+async function saveScroll_amt(amt_saved){
+    const result=await chrome.storage.session.get("AISOLOTL");
+    let AISOLOTL=result?.AISOLOTL?? {};
+    AISOLOTL={...AISOLOTL,
+        scroll_amt:amt_saved
+    }
+    await chrome.storage.session.set({AISOLOTL});
+}
+
 async function saveSignals(signals_saved){ // signals are different to signals sent in chrome.sendMessage
     const result=await chrome.storage.session.get("AISOLOTL");
     let AISOLOTL=result?.AISOLOTL?? {};
@@ -616,12 +673,12 @@ async function saveSignals(signals_saved){ // signals are different to signals s
 }
 
 async function saveState(state_saved){
-    const result=await chrome.storage.local.get("AISOLOTL");
+    const result=await chrome.storage.session.get("AISOLOTL");
     let AISOLOTL=result?.AISOLOTL ?? {}
     AISOLOTL.platform ??= {}
     AISOLOTL.platform["Messenger"]??= {}
     AISOLOTL.platform["Messenger"].process_state=state_saved;
-    await chrome.storage.local.set({AISOLOTL});
+    await chrome.storage.session.set({AISOLOTL});
 }
 
 async function loadConversations(){
@@ -668,9 +725,15 @@ async function loadSignals(){
 }
 
 async function loadState(){
-    const result=await chrome.storage.local.get("AISOLOTL");
+    const result=await chrome.storage.session.get("AISOLOTL");
     if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].process_state) return "idle";
     return result.AISOLOTL.platform["Messenger"].process_state;
+}
+
+async function loadAmt(){
+    const result=await chrome.storage.session.get("AISOLOTL");
+    if (!result||!result.AISOLOTL||!result.AISOLOTL.platform||!result.AISOLOTL.platform["Messenger"]||!result.AISOLOTL.platform["Messenger"].scroll_amt) return 7;
+    return result.AISOLOTL.platform["Messenger"].scroll_amt;
 }
 
 async function clearSavedData(){
