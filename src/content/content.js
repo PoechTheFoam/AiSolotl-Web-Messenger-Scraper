@@ -22,7 +22,12 @@ async function initialize(){
 
     chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
         if (request.signal==="clear"){(
-            async()=>{await clearSavedData();})();
+            async()=>{
+                await saveSignals({init_signal:"initializing"})
+                await clearLocalStorage();
+                await gatherData()
+                await saveSignals({init_signal:"finished"})
+            })();
         }
         if (request.signal==="pick_conv"){
             (async ()=>{
@@ -33,14 +38,9 @@ async function initialize(){
                 console.log("c_list_container mutation detected");
                 //maybe add code here for target=checkbox later
                 clearTimeout(timer);
-                clearTimeout(timeout_timer);
                 timer=setTimeout(async ()=>{
                     await updateCheckboxes();
                 },100)
-                timeout_timer=setTimeout(async ()=>{
-                    clearTimeout(timer);
-                    await updateCheckboxes();
-                },200)
             })
             pick_conv_observer.observe(c_list_container,{
                 childList:true,
@@ -83,6 +83,8 @@ async function initialize(){
         )()}
 
         if (request.signal==="sum_start"){
+            // users may spam sum_btn -> multiple async functions fire; need cooldown
+
             // start scrolling convos + switching convos here
             // save the data
             // send data back to Python backend here
@@ -93,6 +95,7 @@ async function initialize(){
                 if (!c_list_labelled[c].current){
                     let next_convo_link;
                     next_convo_link=find_next_link(c_list_labelled,c);
+                    console.log("p_list before switching (1st): ",structuredClone(processing_list))
                     window.location.href=next_convo_link;
                     return;
                 }
@@ -100,17 +103,22 @@ async function initialize(){
                 await processConversation(conversation);
                 c_list_labelled[c].processed=true;
                 await saveConversations(conversations,c_list_labelled);
+                console.log("p_list before updating: ",structuredClone(processing_list))
                 updateProcessingList(c_list_labelled);
+                console.log("p_list after updating: ",structuredClone(processing_list))
                 if (processing_list.length===0){
+                    console.log("No more to process")
                     await saveConversations(conversations,c_list_labelled);
                     conversations=await loadConversations();
                     await send_data(conversations);
+                    await clearLocalStorage();
                     await saveSignals({sum_signal:"finished"})
                     await saveState("idle")
                     return;
                 }
                 let next_c=processing_list[0];
                 let next_convo_link=find_next_link(c_list_labelled,next_c);
+                console.log("p_list before switching (2nd): ",structuredClone(processing_list))
                 window.location.href=next_convo_link;
             })();
         }
@@ -118,15 +126,17 @@ async function initialize(){
 
 
     await gatherData();
-    console.log("Processing list: ",processing_list);
-    console.log("State: ",process_state);
+    console.log("Processing list: ",structuredClone(processing_list));
+    console.log("State: ",structuredClone(process_state));
 
     await saveSignals({init_signal:"finished"});
     if (process_state==="ongoing"){
         if (processing_list.length===0){
+            console.log("No more to process")
             await saveConversations(conversations,c_list_labelled);
             conversations=await loadConversations();
             await send_data(conversations);
+            await clearLocalStorage();
             await saveSignals({sum_signal:"finished"})
             await saveState("idle")
             return;
@@ -139,6 +149,7 @@ async function initialize(){
         if (processing_list.length===0){
             conversations=await loadConversations();
             await send_data(conversations);
+            await clearLocalStorage();
             await saveSignals({sum_signal:"finished"});
             await saveState("idle")
             return;
@@ -190,7 +201,6 @@ async function initialize(){
     async function updateCheckboxes(){
         refreshConvos();
         addCheckboxes();
-        updateProcessingList(c_list_labelled);
     }
 
     function refreshConvos(){
@@ -201,24 +211,58 @@ async function initialize(){
         let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]")
         c_list=[...cand];
         for (const c of c_list){
-            let c_is_current=false;
-            let name;
-            let spanList=c.querySelectorAll("span[dir]")
-            for (const s of spanList){
-                if (conversation.includes(s.innerText)) name=s.innerText;
+        let c_is_current=false;
+        let spanList=c.querySelectorAll("span[dir]")
+        const conv_norm=remove_whitespace(normalize_text(conversation));
+        for (const s of spanList){
+            let span_norm=remove_whitespace(normalize_text(s.innerText));
+            if (span_norm===""){
+                let icons=s.querySelector("img")
+                span_norm = icons?.getAttribute("alt")??"";
             }
-            if (conversation.includes(name)) c_is_current=true;
-            let c_identifier=c.getAttribute("href");
-            let c_link=`https://facebook.com${c_identifier}`;
-            if (c_is_current){ //branching for loads
-                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
-            }
-            else {
-                if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-                else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
+            const matches=span_norm!=="" && conv_norm.includes(span_norm)
+                console.log(
+        "TESTING SPAN:",
+        JSON.stringify(span_norm),
+        "against:",
+        JSON.stringify(conv_norm),
+        "=>",
+        "includes span_norm",conv_norm.includes(span_norm)
+    );
+     console.log(
+        "identifier:", c.getAttribute("href"),
+        "span:", JSON.stringify(span_norm),
+        "matched:", matches
+    );
+            if (matches) {
+                c_is_current=true;
+                console.log(
+            "MARKING CURRENT:",
+            c.getAttribute("href"),
+            "BECAUSE:",
+            JSON.stringify(span_norm)
+        );
+                break;
             }
         }
+        console.log("conv: ",conversation);
+        console.log("conv_norm: ",conv_norm);
+        let c_identifier=c.getAttribute("href");
+        console.log(c_identifier);
+        let c_link=`https://facebook.com${c_identifier}`;
+        console.log("c_is_current: ",structuredClone(c_is_current));
+        if (c_is_current){ //branching for loads
+            console.log("entered current true branch")
+            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
+            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
+        }
+        else {
+            console.log("entered current false branch")
+            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
+            
+            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
+        }
+    }
         updateProcessingList(c_list_labelled);
     }
 
@@ -269,7 +313,7 @@ async function initialize(){
                 conversation_keys=Object.keys(conversations[conversation]);
                 exist_index=conversation_keys.indexOf(messageId);
             }
-            if (exist_index!=-1) continue;    
+            if (exist_index!=-1) continue;
             
             if (innerCounter===0) {
                 scrollAnchor=event;
@@ -282,26 +326,30 @@ async function initialize(){
 
             let content= event.innerText.trim(); //
             
-            let media="undefined";
+            let media={};
             // case 1: stickers
             let sticker=event.querySelector("[role='img']");
             if (sticker){
-                if (sticker.getAttribute("aria-label")!==" sticker") media="Sticker: "+sticker.getAttribute("aria-label");
+                media.type="sticker"
+                if (sticker.getAttribute("aria-label")!==" sticker") media.name=sticker.getAttribute("aria-label");
                 else {
                     let stickerLinkWrapper=event.style.getPropertyValue("background-image");
                     let stickerLink=stickerLinkWrapper.match(/url\((['"]?)(.*?)\1\)/);
-                    media=stickerLink;
+                    media.url=stickerLink?.[2]
                 }
             }
 
             //case 2: files
             let file=event.querySelector("[download]");
                 if (file){
+                    media.type="file/attachment"
                     let mediaLink=file.getAttribute("href");
                     let file_name_frags=event.querySelectorAll("span[dir][style]");
                     let file_name="";
-                    for (const frag of file_name_frags) file_name=file_name+frag.innerText+" ";
-                    media="File/Attachment: "+JSON.stringify(file_name.trim()).replace(/\\n/g," ")+" "+mediaLink;
+                    file_name=file_name+file_name_frags[0].innerText+" ";
+                    media.name=JSON.stringify(file_name.trim()).replace(/\\n/g," ")
+                    media.url=mediaLink;
+                    //fix/verify this later to see if [0] is consistently the file name
                 }
             
             let total_hrefs=event.querySelectorAll("[role='link'][href]");
@@ -309,8 +357,10 @@ async function initialize(){
             if (isNotImage){
                 // case 4: Links/Other attachments
             if (!sticker&&!file){
-                let links=event.querySelectorAll("[href]");
+                let links=event.querySelectorAll("a[href]");
+                if (links.length===0) media={}
                 if (links.length>0){
+                    media.type="links/other"
                     let cleaned_links=[...links].slice(0,-1);
                     let link_list={};
                     let link_counter=0;
@@ -319,12 +369,13 @@ async function initialize(){
                         link_counter++;
                         };
                     link_counter=0;
-                    media={"Links":link_list};
+                    media.urls=link_list;
                 }
             }
             }
             if (total_hrefs.length===1 && !isNotImage && !file) {
                 // case 3: images
+                media.type="image"
                 let cand_image_container=event.querySelector("[role='link'][href]");
                 let cand_images=cand_image_container.querySelectorAll("img[height]");
                 let image;
@@ -332,19 +383,20 @@ async function initialize(){
                     if (img.getAttribute("alt").length>1) image=img;
                 }
                 if (image&&(!sticker&&!file)){
-                    media="Image: "+image.getAttribute("src");
+                    media.url=image.getAttribute("src")
                 }
             }
 
             
             
-            /*console.log("------------------")
+            console.log("------------------")
             console.log("Message "+innerCounter)
             console.log("Raw label: "+rawLabel)
             console.log("content: "+content);
-            console.log("media: ", media);*/
+            console.log("media: ", media);
             innerCounter++;
             output[messageId]={
+            rawLabel:rawLabel,
             content:content,
             media:media
             };
@@ -357,8 +409,8 @@ async function initialize(){
             while (first_session&&counter<scroll_amt){
             scrollAnchor=undefined;
             tables = await waitForElementsSettle(chatRegion);
-            console.log("New data: ",structuredClone(getMessagesData(conversation,tables)));
-            console.log("Old data: ", structuredClone(conversations[conversation]))
+            //console.log("New data: ",structuredClone(getMessagesData(conversation,tables)));
+            //console.log("Old data: ", structuredClone(conversations[conversation]))
             conversations[conversation]= {...(getMessagesData(conversation,tables)),...(conversations[conversation] ?? {})};
             console.log("Data post-write: ",structuredClone(conversations[conversation]))
             if (!scrollAnchor&&Object.keys(conversations[conversation]??{}).length>0) {
@@ -387,7 +439,9 @@ async function initialize(){
         }
         if (counter===scroll_amt){
             console.log("First session completed:  "+counter);
-            console.log(scrollAnchor);
+            for (const [id, message] of Object.entries(conversations[conversation])) {
+                console.log(id, message.rawLabel, message.content);
+            }
         }
         }
     }
@@ -466,6 +520,16 @@ async function initialize(){
         console.log("D");
     }
 
+    function remove_whitespace(str){
+        return (str ?? "").replace(/\s+/g, "");
+    }
+
+    function normalize_text(str){
+        return (str ?? "")
+        .normalize("NFKC")
+        .replace(/[\s\u200B-\u200D\uFEFF]+/g, "");
+    }
+
     async function initialize_conversations(){
     console.log("A");
     c_list_container=[...await waitForElementsSettle2()]?.[2];
@@ -475,24 +539,54 @@ async function initialize(){
     c_list=[...cand];
     for (const c of c_list){
         let c_is_current=false;
-        let name;
         let spanList=c.querySelectorAll("span[dir]")
+        const conv_norm=remove_whitespace(normalize_text(conversation));
         for (const s of spanList){
-            if (conversation.includes(s.innerText)) name=s.innerText;
+            let span_norm=remove_whitespace(normalize_text(s.innerText));
+            if (span_norm===""){
+                let icons=s.querySelector("img")
+                span_norm = icons?.getAttribute("alt")??"";
+            }
+            const matches=span_norm!=="" && conv_norm.includes(span_norm)
+                console.log(
+        "TESTING SPAN:",
+        JSON.stringify(span_norm),
+        "against:",
+        JSON.stringify(conv_norm),
+        "=>",
+        "includes span_norm",conv_norm.includes(span_norm)
+    );
+     console.log(
+        "identifier:", c.getAttribute("href"),
+        "span:", JSON.stringify(span_norm),
+        "matched:", matches
+    );
+            if (matches) {
+                c_is_current=true;
+                console.log(
+            "MARKING CURRENT:",
+            c.getAttribute("href"),
+            "BECAUSE:",
+            JSON.stringify(span_norm)
+        );
+                break;
+            }
         }
-        console.log(conversation);
-        console.log(name);
-        if (conversation.includes(name)) c_is_current=true;
-        console.log(c_is_current);
+        console.log("conv: ",conversation);
+        console.log("conv_norm: ",conv_norm);
         let c_identifier=c.getAttribute("href");
         console.log(c_identifier);
         let c_link=`https://facebook.com${c_identifier}`;
+        console.log("c_is_current: ",structuredClone(c_is_current));
         if (c_is_current){ //branching for loads
+            console.log("entered current true branch")
             if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
             else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
         }
         else {
+            console.log("entered current false branch")
             if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
+            
             else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
         }
     }
@@ -525,7 +619,7 @@ async function initialize(){
         const max_amt=3;
         while (amt<=max_amt){
             try{
-            const response= await fetch("http://localhost:8000/echo", {
+            const response= await fetch("http://localhost:8000/summarize", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -559,6 +653,24 @@ async function initialize(){
         }
         await saveConversations(conversations,c_list_labelled);
     }
+
+    async function clearConversationData(){
+        const result=await chrome.storage.local.get("AISOLOTL");
+        let AISOLOTL=result?.AISOLOTL ?? {}
+        AISOLOTL.platform ??= {}
+        AISOLOTL.platform["Messenger"]??= {}
+        AISOLOTL.platform["Messenger"].conversations={};
+        conversations={}
+        c_list_labelled={}
+        await chrome.storage.local.set({AISOLOTL});    
+    }
+
+    async function clearLocalStorage(){
+        conversations={}
+        c_list_labelled={}
+        let AISOLOTL={platform:{"Messenger":{}}}
+        await chrome.storage.local.set({AISOLOTL});
+}
 }
 
 function delayWithInterruptions(){
@@ -640,6 +752,7 @@ function waitForElementsSettle(chatRegion, {stableForMs = 5000, timeoutMs = 3000
 }
 
 async function saveConversations(conversations,c_list_labelled){
+    await saveSaving_convo(true);
     const result=await chrome.storage.local.get("AISOLOTL");
     let AISOLOTL=result?.AISOLOTL ?? {}
     AISOLOTL.platform ??= {}
@@ -651,14 +764,15 @@ async function saveConversations(conversations,c_list_labelled){
     console.log(AISOLOTL.platform["Messenger"].c_list_labelled);
     console.log(AISOLOTL)*/
     await chrome.storage.local.set({AISOLOTL}).catch((error)=>{console.log(error)})
+    await saveSaving_convo(false);
 }
 
 async function saveScroll_amt(amt_saved){
     const result=await chrome.storage.session.get("AISOLOTL");
     let AISOLOTL=result?.AISOLOTL?? {};
-    AISOLOTL={...AISOLOTL,
-        scroll_amt:amt_saved
-    }
+    AISOLOTL.platform ??={}
+    AISOLOTL.platform["Messenger"] ??={}
+    AISOLOTL.platform["Messenger"].scroll_amt=amt_saved;
     await chrome.storage.session.set({AISOLOTL});
 }
 
@@ -679,6 +793,17 @@ async function saveState(state_saved){
     AISOLOTL.platform["Messenger"]??= {}
     AISOLOTL.platform["Messenger"].process_state=state_saved;
     await chrome.storage.session.set({AISOLOTL});
+}
+
+async function saveSaving_convo(saving_convo_saved){
+    const result=await chrome.storage.session.get("saving_convo")
+    console.log("initial check: ", structuredClone(result?.saving_convo ?? "saving_convo doesn't exist yet"))
+    console.log("attempting to save saving_convo to ", saving_convo_saved, typeof saving_convo_saved)
+    await chrome.storage.session.set({saving_convo:saving_convo_saved});
+    const result2=await chrome.storage.session.get("saving_convo")
+    console.log("final check: ",structuredClone(result2?.saving_convo?? "failed to save saving_convo"))
+    if (result2?.saving_convo) console.log(structuredClone(typeof result2?.saving_convo))
+    
 }
 
 async function loadConversations(){
@@ -736,7 +861,9 @@ async function loadAmt(){
     return result.AISOLOTL.platform["Messenger"].scroll_amt;
 }
 
-async function clearSavedData(){
-    let AISOLOTL={platform:{}}
-    await chrome.storage.local.set({AISOLOTL});
+async function loadSaving_convo(){
+    const result=await chrome.storage.session.get("saving_convo");
+    return result.saving_convo ?? false;
 }
+
+

@@ -1,7 +1,7 @@
 body, body *{
     align-items: center;
 }
-#params,#control{
+section{
     display: flex;
     flex-direction:column;
     align-items: center;
@@ -14,6 +14,7 @@ body, body *{
     gap:5px;
 }
 .item{
+    display: flex;
     flex:1;
     flex-direction: column;
     align-items: center;

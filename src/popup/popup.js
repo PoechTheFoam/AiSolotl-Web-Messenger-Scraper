@@ -9,15 +9,20 @@ document.addEventListener("DOMContentLoaded", async function(){
     let original_text=loading_text.innerText;
     let signals=await loadSignals();
     let stored_scroll_amt_input=await loadScroll_amt_input();
+    let saving_convo=await loadSaving_convo();
 
     refreshUI();
 
     chrome.storage.onChanged.addListener((changes,areaName)=>{
-    if (areaName==="session"){
+        if (areaName==="session"){
         for (const [key, {oldValue, newValue}] of Object.entries(changes)){
             if (key==="AISOLOTL"){ 
                 const result=newValue?.signals?? {}; //there is no new value? (no changes?)
                 signals={init_signal:result?.init_signal?? "none", conv_signal: result?.conv_signal?? "none", scroll_amt_signal:result?.scroll_amt_signal?? "none",sum_signal:result?.sum_signal?? "none"}
+                refreshUI();
+            }
+            if (key==="saving_convo"){
+                saving_convo=newValue??false;
                 refreshUI();
             }
         }
@@ -125,6 +130,11 @@ document.addEventListener("DOMContentLoaded", async function(){
         return AISOLOTL.signals;
     }
 
+    async function loadSaving_convo(){
+        const result=await chrome.storage.session.get("saving_convo");
+        return result?.saving_convo?? false;
+    }
+
     function refreshUI(){
         const init_finished=signals.init_signal==="finished";
         const conv_initializing=signals.conv_signal==="initializing";
@@ -134,6 +144,7 @@ document.addEventListener("DOMContentLoaded", async function(){
         const scroll_amt_finished=signals.scroll_amt_signal==="finished";
         const sum_initializing=signals.sum_signal==="initializing";
         const sum_finished=signals.sum_signal==="finished";
+
         //pre-initialization
         if (!init_finished){
             conv_picker.disabled=true;
@@ -183,6 +194,9 @@ document.addEventListener("DOMContentLoaded", async function(){
             indicator.style.display="none";
             loading_text.textContent=original_text;
         }
+
+        //clear_btn
+        clear_btn.disabled=saving_convo||!init_finished||conv_initializing||scroll_amt_initializing||sum_initializing;
         
     }
 
