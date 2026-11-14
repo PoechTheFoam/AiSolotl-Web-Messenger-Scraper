@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="summary.css">
+    <title>Summary</title>
+</head>
+<body>
+    <section id="initializing">
+        <div class="loading_text"><h4>Extracting messages data, please refrain from clicking on anything</h4></div>
+        <div class="spinner"></div>
+    </section>
+
+    <section id="finished" style="display:none">
+        <div id="overall_summary">
+
+        </div>
+        <div id="emergency">
+
+        </div>
+        <div  id="urgent">
+
+        </div>
+        <div  id="less_urgent">
+
+        </div>
+        <div id="casual">
+            
+        </div>
+        <div id="error"style="display:none">
+            <div class="loading_text"><h4>Extracting messages data, please refrain from clicking on anything</h4></div>
+            <div class="spinner"></div>
+        </div>
+        <div></div>
+    </section>
+
+    <section id="error" style="display: none;">
+
+    </section>
+    <script src="popup.js"></script>    
+</body>
+</html>

@@ -12,8 +12,11 @@ async function initialize(){
     let c_list=[]; 
     let c_list_labelled={}
     let processing_list=[];
+    let popup_state;
+    let popup_data;
     let process_state;
     let scroll_amt;
+    let frame;
 
     let timer;
     let timeout_timer;
@@ -90,6 +93,12 @@ async function initialize(){
             // send data back to Python backend here
             (async()=>{
                 await saveState("ongoing");
+                popup_state="initializing"
+                await savePopup_state(popup_state);
+                popup_data=null;
+                await savePopup_data(popup_data)
+                
+                createPopup();
                 //check if processing_list[0] is current
                 let c=processing_list[0] //initially this is always guaranteed true
                 if (!c_list_labelled[c].current){
@@ -190,8 +199,12 @@ async function initialize(){
         signals=await loadSignals();
         conversations=await loadConversations();
         c_list_labelled=await loadLabelledList();
+        popup_state=await loadPopup_state();
         process_state=await loadState();
         scroll_amt=await loadAmt();
+        popup_data=await loadPopup_data();
+        popup_state=await loadPopup_state();
+        if (popup_state!=="idle") createPopup();
         
         await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled);
@@ -626,24 +639,40 @@ async function initialize(){
             },
             body: JSON.stringify(payload)
         });
-        console.log("Response status: ",response.status);
-        let data=await response.json();
-        console.log("Backend response: ",data)
+            console.log("Response status: ",response.status);
+            popup_data=await response.json();
+            console.log("Backend response: ",popup_data)
             if (!response.ok){
                 //HTTP failure: server responded with 4xx or 5xx; or request reached backend but it failed/rejected
+                if (amt>max_amt){
+                    await savePopup_data(popup_data);
+                    popup_state="error"
+                    await savePopup_state(popup_state);
+                }
                 amt++;
                 await delay(3000);
                 continue;
             }
-            else break;
+            else {
+                await savePopup_data(popup_data);
+                popup_state="finished"
+                await savePopup_state(popup_state);
+                return;
+            };
             
         }catch(error){
+            if (amt>max_amt){
+                await savePopup_data(popup_data);
+                popup_state="error"
+                await savePopup_state(popup_state);
+            }
             //permissions failure/backend unavailable/network failure
             amt++;
             await delay(3000);
             continue;
         }
         }
+        return;
     }
 
     async function resetConversationAttributes(){
@@ -671,6 +700,15 @@ async function initialize(){
         let AISOLOTL={platform:{"Messenger":{}}}
         await chrome.storage.local.set({AISOLOTL});
 }
+    function createPopup(){
+        // needs check for previous popups' existence
+        if (!frame){
+            frame=document.createElement("iframe")
+            frame.src=chrome.runtime.getURL("summary.html")
+            frame.id="summary_popup"
+            document.body.appendChild(frame);
+        }
+    }
 }
 
 function delayWithInterruptions(){
@@ -796,14 +834,27 @@ async function saveState(state_saved){
 }
 
 async function saveSaving_convo(saving_convo_saved){
-    const result=await chrome.storage.session.get("saving_convo")
-    console.log("initial check: ", structuredClone(result?.saving_convo ?? "saving_convo doesn't exist yet"))
-    console.log("attempting to save saving_convo to ", saving_convo_saved, typeof saving_convo_saved)
-    await chrome.storage.session.set({saving_convo:saving_convo_saved});
-    const result2=await chrome.storage.session.get("saving_convo")
-    console.log("final check: ",structuredClone(result2?.saving_convo?? "failed to save saving_convo"))
-    if (result2?.saving_convo) console.log(structuredClone(typeof result2?.saving_convo))
-    
+    await chrome.storage.session.set({saving_convo:saving_convo_saved});    
+}
+
+async function savePopup_state(popup_state_saved){
+    await chrome.storage.session.set({popup_state:popup_state_saved});
+}
+
+async function savePopup_data(popup_data_saved){
+    await chrome.storage.session.set({popup_data:popup_data_saved});
+}
+
+async function loadPopup_state(){
+    const result=await chrome.storage.session.get("popup_state")
+    if (!result||!result.popup_state) return "idle";//idle means not to be shown
+    return result.popup_state;
+}
+
+async function loadPopup_data(){
+    const result=await chrome.storage.session.get("popup_data")
+    if (!result||!result.popup_data) return null;
+    return result.popup_data;
 }
 
 async function loadConversations(){
@@ -865,5 +916,3 @@ async function loadSaving_convo(){
     const result=await chrome.storage.session.get("saving_convo");
     return result.saving_convo ?? false;
 }
-
-
