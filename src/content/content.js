@@ -159,7 +159,8 @@ async function initialize(){
         //current identifier=that of the conversation -> both are currently displayed
         let c= find_current_identifier(c_list_labelled);
         if (!c){
-            //finish process
+            console.error("No matching conversation identifier");
+            return;
         }
         c_list_labelled[c].processed=true;
         await saveConversations(conversations,c_list_labelled);
@@ -233,7 +234,7 @@ async function initialize(){
         for (const c of c_list){
             let c_identifier=c.getAttribute("href");
             let c_link=`https://facebook.com${c_identifier}`;
-            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier]={link:c_link,processed:false,chosen:false};
+            if (!c_list_labelled[c_identifier]) c_list_labelled[c_identifier]={link:c_link,processed:false,chosen:false};
     }
         updateProcessingList(c_list_labelled);
     }
