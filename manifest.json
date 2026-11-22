@@ -19,5 +19,18 @@
   }],
   "action":{
     "default_popup":"src/popup/popup.html"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/summary/summary.html",
+        "src/summary/summary.js",
+        "src/summary/summary.css"
+      ],
+      "matches": [
+        "https://www.messenger.com/*",
+        "https://www.facebook.com/*"
+      ]
+    }
+  ]
 }

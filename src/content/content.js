@@ -152,6 +152,26 @@ async function initialize(){
         }
         await processConversation(conversation);
         let c= find_current_identifier(c_list_labelled);
+        console.log("Actual URL:", location.pathname);
+        console.table(
+            Object.entries(c_list_labelled)
+                .filter(([id, value]) => value.current || value.chosen)
+                .map(([id, value]) => ({
+                    id,
+                    chosen: value.chosen,
+                    current: value.current,
+                    processed: value.processed,
+                    matchesURL:
+                        new URL(value.link, location.origin).pathname
+                            .replace(/\/+$/, "") ===
+                        location.pathname.replace(/\/+$/, "")
+                }))
+        );
+
+        console.log("Current identifier returned:",
+            find_current_identifier(c_list_labelled));
+
+        console.log("Processing queue:", processing_list);
         c_list_labelled[c].processed=true;
         await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled);
@@ -357,9 +377,9 @@ async function initialize(){
                 if (file){
                     media.type="file/attachment"
                     let mediaLink=file.getAttribute("href");
-                    let file_name_frags=event.querySelectorAll("span[dir][style]");
+                    let file_name_frags=event.querySelectorAll("span[dir]");
                     let file_name="";
-                    file_name=file_name+file_name_frags[0].innerText+" ";
+                    file_name=file_name+file_name_frags[1].innerText+" "+file_name_frags[2]+" ";
                     media.name=JSON.stringify(file_name.trim()).replace(/\\n/g," ")
                     media.url=mediaLink;
                     //fix/verify this later to see if [0] is consistently the file name
@@ -401,7 +421,7 @@ async function initialize(){
             }
 
             
-            
+            /*
             console.log("------------------")
             console.log("Message "+innerCounter)
             console.log("Raw label: "+rawLabel)
@@ -413,6 +433,7 @@ async function initialize(){
             content:content,
             media:media
             };
+            */
         }
         let cur_conv=chatRegion.getAttribute("aria-label");
         if (conversation!=cur_conv) return {};
@@ -428,10 +449,10 @@ async function initialize(){
             console.log("Data post-write: ",structuredClone(conversations[conversation]))
             if (!scrollAnchor&&Object.keys(conversations[conversation]??{}).length>0) {
                 let anchorSelector=`[data-message-id="${Object.keys(conversations[conversation])[0]}"]`;
-                console.log("Inside 1st anchor check, chatRegion: ",chatRegion)
-                console.log("Inside 1st anchor check, anchorSelector: ",anchorSelector);
+                /*console.log("Inside 1st anchor check, chatRegion: ",chatRegion)
+                console.log("Inside 1st anchor check, anchorSelector: ",anchorSelector);*/
                 scrollAnchor=chatRegion.querySelector(anchorSelector); 
-                console.log("Inside 1st anchor check, scrollAnchor: ",scrollAnchor);
+                //console.log("Inside 1st anchor check, scrollAnchor: ",scrollAnchor);
             }
             if (scrollAnchor){
                 scrollAnchor?.scrollIntoView({
@@ -452,9 +473,9 @@ async function initialize(){
         }
         if (counter===scroll_amt){
             console.log("First session completed:  "+counter);
-            for (const [id, message] of Object.entries(conversations[conversation])) {
+            /*for (const [id, message] of Object.entries(conversations[conversation])) {
                 console.log(id, message.rawLabel, message.content);
-            }
+            }*/
         }
         }
     }
@@ -699,15 +720,164 @@ async function initialize(){
         c_list_labelled={}
         let AISOLOTL={platform:{"Messenger":{}}}
         await chrome.storage.local.set({AISOLOTL});
-}
+    }
+
+    function setupDragging(widget, header, minimizeBtn, frame) {
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        header.addEventListener("mousedown", (event) => {
+            if (event.target === minimizeBtn) return;
+
+            dragging = true;
+
+            const rect = widget.getBoundingClientRect();
+
+            offsetX = event.clientX - rect.left;
+            offsetY = event.clientY - rect.top;
+
+            // Stop using centering transform after user starts dragging
+            widget.style.transform = "none";
+            widget.style.left = `${rect.left}px`;
+            widget.style.top = `${rect.top}px`;
+
+            event.preventDefault();
+            frame.style.pointerEvents = "none";
+        });
+
+        document.addEventListener("mousemove", (event) => {
+            if (!dragging) return;
+
+            let x = event.clientX - offsetX;
+            let y = event.clientY - offsetY;
+
+            // Prevent the widget from disappearing off-screen
+            const maxX = window.innerWidth - widget.offsetWidth;
+            const maxY = window.innerHeight - header.offsetHeight;
+
+            x = Math.max(0, Math.min(x, maxX));
+            y = Math.max(0, Math.min(y, maxY));
+
+            widget.style.left = `${x}px`;
+            widget.style.top = `${y}px`;
+        });
+
+        document.addEventListener("mouseup", () => {
+            dragging = false;
+            frame.style.pointerEvents = "auto";
+        });
+    }
+
+    function setupMinimize(widget, frame, button) {
+        let minimized = false;
+
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+
+            minimized = !minimized;
+
+            if (minimized) {
+                frame.style.display = "none";
+                button.textContent = "+";
+                button.title = "Expand";
+            } else {
+                frame.style.display = "block";
+                button.textContent = "−";
+                button.title = "Minimize";
+            }
+        });
+    }
+
     function createPopup(){
         // needs check for previous popups' existence
         if (!frame){
+            const widget = document.createElement("div");
+            widget.id = "aisolotl_widget";
+
+            const header = document.createElement("div");
+            header.id = "aisolotl_widget_header";
+
+            const title = document.createElement("span");
+            title.textContent = "AiSolotl";
+
+            const minimizeBtn = document.createElement("button");
+            minimizeBtn.textContent = "−";
+
+            minimizeBtn.title = "Minimize";
             frame=document.createElement("iframe")
-            frame.src=chrome.runtime.getURL("summary.html")
+            frame.src=chrome.runtime.getURL("src/summary/summary.html")
             frame.id="summary_popup"
-            document.body.appendChild(frame);
+
+            Object.assign(frame.style, {
+            width: "100%",
+            height: "520px",
+            maxHeight: "80vh",
+
+            border:"none",
+            backgroundColor:"#242526",
+            
+            display:"block"
+            });
+
+            Object.assign(widget.style, {
+                position: "fixed",
+                top: "30px",
+                left: "50%",
+                transform: "translateX(-50%)",
+
+                width: "380px",
+
+                zIndex: "2147483647",
+
+                border: "1px solid #5a5b5c",
+                borderRadius: "14px",
+                backgroundColor: "#242526",
+                boxShadow: "0 8px 30px rgba(0, 0, 0, 0.55)",
+                
+                overflow: "hidden"
+            });
+
+            Object.assign(header.style, {
+                height: "38px",
+                padding: "0 12px",
+
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+
+                background: "#18191a",
+                color: "#e4e6eb",
+
+                fontFamily: "Arial, sans-serif",
+                fontSize: "14px",
+                fontWeight: "600",
+
+                cursor: "move",
+                userSelect: "none"
+            });
+
+            Object.assign(minimizeBtn.style, {
+                background: "none",
+                border: "none",
+                color: "#e4e6eb",
+                fontSize: "20px",
+                cursor: "pointer"
+            });
+
+
+            header.appendChild(title);
+            header.appendChild(minimizeBtn);
+
+            widget.appendChild(header);
+            widget.appendChild(frame);
+
+            document.body.appendChild(widget);
+
+            setupMinimize(widget, frame, minimizeBtn);
+            setupDragging(widget, header, minimizeBtn,frame);
         }
+        return;
     }
 }
 

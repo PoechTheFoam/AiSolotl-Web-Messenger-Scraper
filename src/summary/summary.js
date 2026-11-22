@@ -101,10 +101,6 @@ document.addEventListener("DOMContentLoaded", async function(){
 
     function renderItems(container, items){
         if (items.length===0){
-            const card = document.createElement("div");
-            card.classList.add("summary-card");
-            card.textContent="No items in this category"
-            container.appendChild(card);
             return;
         }
         for (const item of items) {
