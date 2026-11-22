@@ -101,7 +101,8 @@ async function initialize(){
                 createPopup();
                 //check if processing_list[0] is current
                 let c=processing_list[0] //initially this is always guaranteed true
-                if (!c_list_labelled[c].current){
+                let is_current_conversation=is_identifier_current(c);
+                if (!is_current_conversation){
                     let next_convo_link;
                     next_convo_link=find_next_link(c_list_labelled,c);
                     console.log("p_list before switching (1st): ",structuredClone(processing_list))
@@ -109,7 +110,11 @@ async function initialize(){
                     return;
                 }
                 //this branch is of the current convo is in processing_list, checked by 1st occurrence for simplicity.
-                await processConversation(conversation);
+                let conversation_finished=await processConversation(conversation);
+                if (!conversation_finished){
+                    console.error("Conversation processing failed:", c);
+                    return;
+                }
                 c_list_labelled[c].processed=true;
                 await saveConversations(conversations,c_list_labelled);
                 console.log("p_list before updating: ",structuredClone(processing_list))
@@ -151,27 +156,11 @@ async function initialize(){
             return;
         }
         await processConversation(conversation);
+        //current identifier=that of the conversation -> both are currently displayed
         let c= find_current_identifier(c_list_labelled);
-        console.log("Actual URL:", location.pathname);
-        console.table(
-            Object.entries(c_list_labelled)
-                .filter(([id, value]) => value.current || value.chosen)
-                .map(([id, value]) => ({
-                    id,
-                    chosen: value.chosen,
-                    current: value.current,
-                    processed: value.processed,
-                    matchesURL:
-                        new URL(value.link, location.origin).pathname
-                            .replace(/\/+$/, "") ===
-                        location.pathname.replace(/\/+$/, "")
-                }))
-        );
-
-        console.log("Current identifier returned:",
-            find_current_identifier(c_list_labelled));
-
-        console.log("Processing queue:", processing_list);
+        if (!c){
+            //finish process
+        }
         c_list_labelled[c].processed=true;
         await saveConversations(conversations,c_list_labelled);
         updateProcessingList(c_list_labelled);
@@ -238,63 +227,13 @@ async function initialize(){
 
     function refreshConvos(){
         const selector = "[aria-label][role='navigation']";
-        console.log("A1");
         c_list_container=[...document.querySelectorAll(selector)]?.[2];
-        console.log("B1");
         let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]")
         c_list=[...cand];
         for (const c of c_list){
-        let c_is_current=false;
-        let spanList=c.querySelectorAll("span[dir]")
-        const conv_norm=remove_whitespace(normalize_text(conversation));
-        for (const s of spanList){
-            let span_norm=remove_whitespace(normalize_text(s.innerText));
-            if (span_norm===""){
-                let icons=s.querySelector("img")
-                span_norm = icons?.getAttribute("alt")??"";
-            }
-            const matches=span_norm!=="" && conv_norm.includes(span_norm)
-                console.log(
-        "TESTING SPAN:",
-        JSON.stringify(span_norm),
-        "against:",
-        JSON.stringify(conv_norm),
-        "=>",
-        "includes span_norm",conv_norm.includes(span_norm)
-    );
-     console.log(
-        "identifier:", c.getAttribute("href"),
-        "span:", JSON.stringify(span_norm),
-        "matched:", matches
-    );
-            if (matches) {
-                c_is_current=true;
-                console.log(
-            "MARKING CURRENT:",
-            c.getAttribute("href"),
-            "BECAUSE:",
-            JSON.stringify(span_norm)
-        );
-                break;
-            }
-        }
-        console.log("conv: ",conversation);
-        console.log("conv_norm: ",conv_norm);
-        let c_identifier=c.getAttribute("href");
-        console.log(c_identifier);
-        let c_link=`https://facebook.com${c_identifier}`;
-        console.log("c_is_current: ",structuredClone(c_is_current));
-        if (c_is_current){ //branching for loads
-            console.log("entered current true branch")
-            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
-        }
-        else {
-            console.log("entered current false branch")
-            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-            
-            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
-        }
+            let c_identifier=c.getAttribute("href");
+            let c_link=`https://facebook.com${c_identifier}`;
+            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier]={link:c_link,processed:false,chosen:false};
     }
         updateProcessingList(c_list_labelled);
     }
@@ -304,13 +243,16 @@ async function initialize(){
             let c=document.querySelector(`[href="${key}"]`)
             if (!c) continue;
             let prev=c?.previousElementSibling;
+            let checkbox;
             if (!prev?.classList?.contains("conv_picker")){
-                let checkbox=document.createElement("input");
+                checkbox=document.createElement("input");
                 checkbox.type="checkbox";
                 checkbox.classList.add("conv_picker");
                 checkbox.id=key;
                 c.before(checkbox);
             }
+            else checkbox=prev;
+            checkbox.checked=value.chosen;
         }
     }
 
@@ -332,7 +274,10 @@ async function initialize(){
         let counter=0;
         let scrollAnchor=undefined;
         let cur_conv=chatRegion.getAttribute("aria-label")
-        if (conversation!=cur_conv) {console.log("mismatch encountered: passed convo:",conversation," and current: ",cur_conv);return;}
+        if (conversation!=cur_conv) {
+            console.log("mismatch encountered: passed convo:",conversation," and current: ",cur_conv);
+            return false;
+        }
         console.log("Beginning gathering messages data");
         function getMessagesData(conversation,tables){
         let output={}
@@ -427,13 +372,13 @@ async function initialize(){
             console.log("Raw label: "+rawLabel)
             console.log("content: "+content);
             console.log("media: ", media);
+            */
             innerCounter++;
             output[messageId]={
             rawLabel:rawLabel,
             content:content,
             media:media
             };
-            */
         }
         let cur_conv=chatRegion.getAttribute("aria-label");
         if (conversation!=cur_conv) return {};
@@ -468,7 +413,7 @@ async function initialize(){
                 console.log("Inside invalid anchor check, scrollAnchor: ",scrollAnchor);
                 console.log("Inside invalid anchor check, id of earliest message: ",Object.keys(conversations[conversation])[0]);
                 for (const [key,value] of Object.entries(conversations[conversation])){console.log(key+": "+value.content)};
-                break;
+                return false;
             } //no completion checks/verification here
         }
         if (counter===scroll_amt){
@@ -478,27 +423,8 @@ async function initialize(){
             }*/
         }
         }
+        return true;
     }
-
-    async function nextConversation(){ //potentially outdated bc processed=true line
-        let next_convo_link;
-        let current_identifer=find_current_identifier(c_list_labelled);
-        c_list_labelled[current_identifer].processed=true; 
-        await saveConversations(conversations,c_list_labelled);
-        updateProcessingList(c_list_labelled); //shold remove current from the list.
-        if (processing_list.length===0){
-            end_observing=true;
-            process_state="finished";
-            return;
-        } //no more convos to process
-        let next_identifier=processing_list[0]; //always 
-        next_convo_link=find_next_link(c_list_labelled,next_identifier);
-        next_in_process=true;
-        process_state="switching"
-        window.location.href=next_convo_link;
-        //find conv that has attr "current=true"
-        //find index of that conv, go into the next conv/return depending on logic
-    } //outdated function but reuseable idea
 
     function waitForElementsSettle2({stableForMs = 5000,timeoutMs = 30000} = {}) {
     return new Promise((resolve) => {
@@ -543,14 +469,16 @@ async function initialize(){
     }
 
     function find_current_identifier(c_list_labelled){
-        console.log("C");
-        for (const [key,value] of Object.entries(c_list_labelled)){
-            if (value.current){
-                console.log(key);
-                console.log(value);
-                return key
-            }
+        let current_conversation=location.pathname
+        for(const [key] of Object.entries(c_list_labelled)){
+            if (current_conversation.includes(key)) return key;
         }
+    }
+
+    function is_identifier_current(c_identifier){
+        console.log("C")
+        let current_conversation=location.pathname
+        if (current_conversation.includes(c_identifier)) return true;
         console.log("D");
     }
 
@@ -565,64 +493,13 @@ async function initialize(){
     }
 
     async function initialize_conversations(){
-    console.log("A");
     c_list_container=[...await waitForElementsSettle2()]?.[2];
-    console.log("B")
-    console.log(c_list_container);
     let cand=c_list_container.querySelectorAll("a[role='link'][aria-current][href]");
     c_list=[...cand];
     for (const c of c_list){
-        let c_is_current=false;
-        let spanList=c.querySelectorAll("span[dir]")
-        const conv_norm=remove_whitespace(normalize_text(conversation));
-        for (const s of spanList){
-            let span_norm=remove_whitespace(normalize_text(s.innerText));
-            if (span_norm===""){
-                let icons=s.querySelector("img")
-                span_norm = icons?.getAttribute("alt")??"";
-            }
-            const matches=span_norm!=="" && conv_norm.includes(span_norm)
-                console.log(
-        "TESTING SPAN:",
-        JSON.stringify(span_norm),
-        "against:",
-        JSON.stringify(conv_norm),
-        "=>",
-        "includes span_norm",conv_norm.includes(span_norm)
-    );
-     console.log(
-        "identifier:", c.getAttribute("href"),
-        "span:", JSON.stringify(span_norm),
-        "matched:", matches
-    );
-            if (matches) {
-                c_is_current=true;
-                console.log(
-            "MARKING CURRENT:",
-            c.getAttribute("href"),
-            "BECAUSE:",
-            JSON.stringify(span_norm)
-        );
-                break;
-            }
-        }
-        console.log("conv: ",conversation);
-        console.log("conv_norm: ",conv_norm);
         let c_identifier=c.getAttribute("href");
-        console.log(c_identifier);
         let c_link=`https://facebook.com${c_identifier}`;
-        console.log("c_is_current: ",structuredClone(c_is_current));
-        if (c_is_current){ //branching for loads
-            console.log("entered current true branch")
-            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=true; //don't know if this checks whether CLL exists correctly
-            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:true,chosen:false};
-        }
-        else {
-            console.log("entered current false branch")
-            if (c_list_labelled[c_identifier]) c_list_labelled[c_identifier].current=false; //do not touch processed status for now
-            
-            else c_list_labelled[c_identifier]={link:c_link,processed:false,current:false,chosen:false};
-        }
+        if (!c_list_labelled[c_identifier]) c_list_labelled[c_identifier]={link:c_link,processed:false,chosen:false};
     }
         updateProcessingList(c_list_labelled);
     }
