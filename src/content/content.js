@@ -155,7 +155,11 @@ async function initialize(){
             await saveState("idle")
             return;
         }
-        await processConversation(conversation);
+        let conversation_finished=await processConversation(conversation);
+        if (!conversation_finished){
+            console.error("Conversation processing failed:", c);
+            return;
+        }
         //current identifier=that of the conversation -> both are currently displayed
         let c= find_current_identifier(c_list_labelled);
         if (!c){
@@ -321,14 +325,14 @@ async function initialize(){
             //case 2: files
             let file=event.querySelector("[download]");
                 if (file){
+                    console.log(event," being processed as file");
                     media.type="file/attachment"
                     let mediaLink=file.getAttribute("href");
                     let file_name_frags=event.querySelectorAll("span[dir]");
                     let file_name="";
-                    file_name=file_name+file_name_frags[1].innerText+" "+file_name_frags[2]+" ";
-                    media.name=JSON.stringify(file_name.trim()).replace(/\\n/g," ")
+                    file_name=file_name+file_name_frags[1].innerText;
+                    media.name = file_name.trim().replace(/\n/g, " ");
                     media.url=mediaLink;
-                    //fix/verify this later to see if [0] is consistently the file name
                 }
             
             let total_hrefs=event.querySelectorAll("[role='link'][href]");
@@ -361,8 +365,10 @@ async function initialize(){
                 for (const img of cand_images){
                     if (img.getAttribute("alt").length>1) image=img;
                 }
-                if (image&&(!sticker&&!file)){
-                    media.url=image.getAttribute("src")
+                const url=image?.getAttribute("src")
+                if (url){
+                    media.type="image";
+                    media.url=url;
                 }
             }
 
